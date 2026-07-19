@@ -88,7 +88,7 @@ Console.WriteLine($"Опубликовано: {post.Url}");   // https://vk.ru/w
 ## Консольный пример (CLI)
 
 ```bash
-dotnet run --project samples/VkBrowserClient.ConsoleSample -- <команда>
+dotnet run --project samples/VkBrowserClient.ConsoleSample -- [--session <имя>] <команда>
 ```
 
 | Команда | Описание |
@@ -97,10 +97,25 @@ dotnet run --project samples/VkBrowserClient.ConsoleSample -- <команда>
 | `history <peer_id> [count]` | история сообщений |
 | `send <peer_id> <текст> [--photo путь]` | отправить сообщение (можно с фото) |
 | `post <текст> [--photo путь]` | опубликовать запись |
-| `export <файл>` | выгрузить сессию (для сервера) |
-| `import <файл>` | загрузить сессию |
+| `export <файл>` | выгрузить выбранную сессию (для сервера) |
+| `import <файл>` | загрузить сессию из файла в выбранную |
+| `sessions` | список сохранённых сессий |
 | `help` | справка |
 
-Путь к файлу сессии задаётся переменной `VK_SESSION_PATH`.
+### Несколько аккаунтов (именованные сессии)
+
+Каждая сессия — отдельный файл `sessions/<имя>.json`. При запуске без `--session`
+(и не в пайпе) предлагается выбрать существующую сессию или новый вход. Сессия из
+прошлых версий автоматически становится `default`.
+
+```bash
+# войти/работать под аккаунтом «work» (откроет браузер, если сессии ещё нет)
+dotnet run --project samples/VkBrowserClient.ConsoleSample -- --session work dialogs
+
+# список сохранённых сессий
+dotnet run --project samples/VkBrowserClient.ConsoleSample -- sessions
+```
+
+`VK_SESSION_PATH` задаёт конкретный файл сессии в обход выбора.
 
 О переносе сессии на сервер без браузера — см. [SERVER.md](SERVER.md).
