@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <RootNamespace>VkBrowserClient</RootNamespace>
+    <AssemblyName>VkBrowserClient</AssemblyName>
+
+    <!-- NuGet-пакет -->
+    <PackageId>VkBrowserClient</PackageId>
+    <Version>0.2.0</Version>
+    <Authors>technopriest</Authors>
+    <Product>VkBrowserClient</Product>
+    <Description>Неофициальный клиент vk.ru: вход через браузер (Playwright), сохранение cookie-сессии и обновление короткоживущего web-токена для фоновой работы без UI. Умеет читать диалоги и историю, отправлять сообщения с фото и публиковать записи на стене — тем же способом, что и веб-клиент.</Description>
+    <PackageTags>vk;vkontakte;messenger;messages;wall;unofficial;playwright</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/t3chn0pr13st/VKBrowserClient</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/t3chn0pr13st/VKBrowserClient</PackageProjectUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Playwright" Version="1.61.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

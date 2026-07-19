@@ -1,0 +1,30 @@
+# .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+
+# NuGet output
+artifacts/
+*.nupkg
+*.snupkg
+
+# Playwright browser binaries / traces
+.playwright/
+playwright/.cache/
+*.zip
+
+# Session files — содержат ключи от аккаунта, НИКОГДА не коммитить!
+session.json
+*.session.json
+secrets/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/VkBrowserClient.ConsoleSample/VkBrowserClient.ConsoleSample.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/VkBrowserClient/VkBrowserClient.csproj" />
+  </Folder>
+</Solution>
