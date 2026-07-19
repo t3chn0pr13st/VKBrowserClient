@@ -49,8 +49,14 @@ public sealed class VkWebApi : IDisposable
         _http.Timeout = TimeSpan.FromSeconds(30);
 
         // Отдельный клиент для загрузки медиа: подписанные upload-URL не требуют cookies,
-        // а таймаут больше (видео/файлы могут грузиться дольше обычного API-вызова).
-        _uploadHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        // таймаут больше (видео/файлы грузятся дольше), и НЕ следуем редиректам:
+        // часть upload-серверов pu.vk.ru отвечает 3xx, следование которому меняет POST→GET и даёт 405.
+        var uploadHandler = new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.All,
+        };
+        _uploadHttp = new HttpClient(uploadHandler, disposeHandler: true) { Timeout = TimeSpan.FromMinutes(5) };
         _uploadHttp.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", session.UserAgent ?? _options.UserAgent);
     }
 

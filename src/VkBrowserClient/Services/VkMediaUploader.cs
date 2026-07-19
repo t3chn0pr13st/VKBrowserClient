@@ -7,9 +7,13 @@ namespace VkBrowserClient;
 /// get*UploadServer / *.save → POST файла на подписанный URL → *.save.
 /// Возвращает строку-вложение (photo…/doc…/video…) для messages.send / wall.post.
 /// Имена полей формы проверены на живых серверах: photo, file, video_file.
+/// Загрузка на pu.vk.ru изредка отдаёт 3xx/405 на отдельных серверах, поэтому
+/// шаг «получить сервер + залить файл» повторяется с новым URL (как retry_count в вебе).
 /// </summary>
 internal sealed class VkMediaUploader(VkWebApi api)
 {
+    private const int UploadAttempts = 3;
+
     // --- Фото -----------------------------------------------------------------
 
     public Task<string> UploadPhotoAsync(long? peerId, VkImage image, CancellationToken ct) => peerId is long peer
@@ -20,8 +24,11 @@ internal sealed class VkMediaUploader(VkWebApi api)
     private async Task<string> UploadPhotoCoreAsync(
         string getServer, Dictionary<string, string> serverParams, string saveMethod, VkImage image, CancellationToken ct)
     {
-        var uploadUrl = await GetUploadUrlAsync(getServer, serverParams, ct).ConfigureAwait(false);
-        var uploaded = await api.UploadPhotoAsync(uploadUrl, image, ct).ConfigureAwait(false);
+        var uploaded = await WithRetryAsync(async () =>
+        {
+            var uploadUrl = await GetUploadUrlAsync(getServer, serverParams, ct).ConfigureAwait(false);
+            return await api.UploadPhotoAsync(uploadUrl, image, ct).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
 
         using var saved = await api.CallAsync(saveMethod, new Dictionary<string, string>
         {
@@ -30,7 +37,6 @@ internal sealed class VkMediaUploader(VkWebApi api)
             ["hash"] = uploaded.Hash,
         }, ct).ConfigureAwait(false);
 
-        // Ответ — массив сохранённых фото.
         var response = VkWebApi.GetResponseOrThrow(saved, saveMethod);
         if (response.ValueKind == JsonValueKind.Array)
             foreach (var el in response.EnumerateArray())
@@ -63,16 +69,16 @@ internal sealed class VkMediaUploader(VkWebApi api)
             serverParams = new Dictionary<string, string>();
         }
 
-        var uploadUrl = await GetUploadUrlAsync(getServer, serverParams, ct).ConfigureAwait(false);
-
         // Сервер документов принимает файл в поле «file» и возвращает {file: "<token>"}.
-        string fileToken;
-        using (var up = await api.UploadFileAsync(uploadUrl, "file", bytes, fileName, ContentTypeFor(fileName), ct).ConfigureAwait(false))
+        var fileToken = await WithRetryAsync(async () =>
         {
-            fileToken = up.RootElement.TryGetProperty("file", out var f) ? f.GetString() ?? "" : "";
-            if (string.IsNullOrEmpty(fileToken))
+            var uploadUrl = await GetUploadUrlAsync(getServer, serverParams, ct).ConfigureAwait(false);
+            using var up = await api.UploadFileAsync(uploadUrl, "file", bytes, fileName, ContentTypeFor(fileName), ct).ConfigureAwait(false);
+            var token = up.RootElement.TryGetProperty("file", out var f) ? f.GetString() ?? "" : "";
+            if (string.IsNullOrEmpty(token))
                 throw new VkClientException($"Сервер документов не принял файл: {up.RootElement.GetRawText()}");
-        }
+            return token;
+        }, ct).ConfigureAwait(false);
 
         using var saved = await api.CallAsync("docs.save",
             new Dictionary<string, string> { ["file"] = fileToken, ["title"] = fileName }, ct).ConfigureAwait(false);
@@ -114,18 +120,36 @@ internal sealed class VkMediaUploader(VkWebApi api)
                 throw new VkClientException("video.save не вернул upload_url/video_id.");
         }
 
-        // Шаг 2: POST файла в поле «video_file» на CDN. Видео обрабатывается асинхронно,
-        // но ссылка-вложение уже валидна.
-        using (var up = await api.UploadFileAsync(uploadUrl, "video_file", bytes, fileName, "video/mp4", ct).ConfigureAwait(false))
+        // Шаг 2: POST файла в поле «video_file» на CDN (повтор на том же URL, чтобы не плодить пустые видео).
+        // Видео обрабатывается асинхронно, но ссылка-вложение уже валидна.
+        await WithRetryAsync(async () =>
         {
+            using var up = await api.UploadFileAsync(uploadUrl, "video_file", bytes, fileName, "video/mp4", ct).ConfigureAwait(false);
             if (up.RootElement.TryGetProperty("error", out _))
                 throw new VkClientException($"CDN отклонил видео: {up.RootElement.GetRawText()}");
-        }
+            return true;
+        }, ct).ConfigureAwait(false);
 
         return string.IsNullOrEmpty(accessKey) ? $"video{ownerId}_{videoId}" : $"video{ownerId}_{videoId}_{accessKey}";
     }
 
     // --- Общее ----------------------------------------------------------------
+
+    private static async Task<T> WithRetryAsync<T>(Func<Task<T>> action, CancellationToken ct, int attempts = UploadAttempts)
+    {
+        for (var i = 1; ; i++)
+        {
+            try
+            {
+                return await action().ConfigureAwait(false);
+            }
+            catch (VkClientException) when (i < attempts)
+            {
+                // Свежий upload-сервер на следующей попытке (часть серверов pu.vk.ru отдаёт 3xx/405).
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * i), ct).ConfigureAwait(false);
+            }
+        }
+    }
 
     private async Task<string> GetUploadUrlAsync(string method, Dictionary<string, string> parameters, CancellationToken ct)
     {
