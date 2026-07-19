@@ -119,7 +119,8 @@ try
             RequireArg(positionals, 0, "clip <путь-к-видео> [описание]");
             var clipDesc = positionals.Count > 1 ? string.Join(' ', positionals.Skip(1)) : null;
             Console.WriteLine("Публикую клип (создание → загрузка → кодирование → публикация)…");
-            var clip = await client.Clips.PublishFromFileAsync(positionals[0], clipDesc, cancellationToken: ct);
+            var clip = await client.Clips.PublishFromFileAsync(
+                positionals[0], new VkClipPublishOptions { Description = clipDesc }, ct);
             Console.WriteLine($"Клип опубликован: {clip.Url}");
             break;
 

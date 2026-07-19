@@ -115,11 +115,27 @@ VkAttachmentSource.Video(bytes, "clip.mp4", name: "Клип", description: "…"
 `shortVideo.publish`.
 
 ```csharp
-var clip = await client.Clips.PublishFromFileAsync("clip.mp4", description: "Мой клип");
+var clip = await client.Clips.PublishFromFileAsync("clip.mp4",
+    new VkClipPublishOptions { Description = "Мой клип" });
 Console.WriteLine(clip.Url);   // https://vk.ru/clip{owner}_{id}
+```
 
-// из байтов; без записи на стену; от имени сообщества
-await client.Clips.PublishAsync(bytes, "clip.mp4", description: "…", alsoPostToWall: false, groupId: 12345);
+Все параметры публикации (соответствуют галочкам в окне VK):
+
+```csharp
+await client.Clips.PublishFromFileAsync("clip.mp4", new VkClipPublishOptions
+{
+    Description = "…",
+    View = VkClipPrivacy.Friends,                 // кто может смотреть
+    Comment = VkClipPrivacy.OnlyMe,               // кто может комментировать
+    AllowDuets = false,                           // разрешить дуэты
+    PostToWall = false,                           // также разместить на стене
+    GroupId = 12345,                              // от имени сообщества
+    PublishAt = DateTimeOffset.Now.AddHours(2),   // отложенная публикация
+});
+
+// из байтов:
+await client.Clips.PublishAsync(bytes, "clip.mp4", new VkClipPublishOptions { Description = "…" });
 ```
 
 Ограничения: минимальный размер файла — **16 КБ**; крупные клипы веб грузит чанками

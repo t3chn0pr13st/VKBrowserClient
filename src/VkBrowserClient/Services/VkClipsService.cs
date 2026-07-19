@@ -6,10 +6,14 @@ namespace VkBrowserClient;
 /// Публикация клипов (VK Клипы) — по флоу веб-клиента:
 /// shortVideo.create → загрузка на CDN → shortVideo.encodeProgress → shortVideo.edit → shortVideo.publish.
 ///
+/// Параметры публикации (описание, приватность, дуэты, стена, сообщество, отложка)
+/// задаются через <see cref="VkClipPublishOptions"/>.
+///
 /// Замечания:
-///  • крупные клипы веб-клиент грузит чанками (4 канала); здесь — одиночный POST,
+///  • крупные клипы веб грузит чанками (4 канала); здесь — одиночный POST,
 ///    чего достаточно для роликов умеренного размера;
-///  • обложка выбирается автоматически (кадр по умолчанию) — выбор конкретного кадра не реализован.
+///  • выбор конкретного кадра обложки не реализован (кадр по умолчанию);
+///  • VK требует минимальный размер файла 16 КБ.
 /// </summary>
 public sealed class VkClipsService
 {
@@ -19,23 +23,18 @@ public sealed class VkClipsService
 
     /// <summary>Опубликовать клип из файла.</summary>
     public Task<VkClipResult> PublishFromFileAsync(
-        string path, string? description = null, bool alsoPostToWall = true,
-        long? groupId = null, CancellationToken cancellationToken = default)
-        => PublishAsync(File.ReadAllBytes(path), Path.GetFileName(path), description, alsoPostToWall, groupId, cancellationToken);
+        string path, VkClipPublishOptions? options = null, CancellationToken cancellationToken = default)
+        => PublishAsync(File.ReadAllBytes(path), Path.GetFileName(path), options, cancellationToken);
 
-    /// <summary>
-    /// Опубликовать клип из байтов видео (вертикальное короткое видео).
-    /// <paramref name="alsoPostToWall"/> — также разместить запись на стене (как в вебе).
-    /// <paramref name="groupId"/> — опубликовать от имени сообщества (иначе в профиль).
-    /// </summary>
+    /// <summary>Опубликовать клип из байтов видео (вертикальное короткое видео).</summary>
     public async Task<VkClipResult> PublishAsync(
-        byte[] video, string fileName, string? description = null, bool alsoPostToWall = true,
-        long? groupId = null, CancellationToken cancellationToken = default)
+        byte[] video, string fileName, VkClipPublishOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(video);
         if (video.Length < 16384)
             throw new ArgumentException("Клип слишком мал: VK требует минимум 16 КБ.", nameof(video));
 
+        options ??= new VkClipPublishOptions();
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
 
         // 1) shortVideo.create — резервирует клип и отдаёт upload_url.
@@ -44,7 +43,7 @@ public sealed class VkClipsService
         using (var doc = await api.CallAsync("shortVideo.create", new Dictionary<string, string>
         {
             ["file_size"] = video.Length.ToString(),
-            ["group_id"] = groupId?.ToString() ?? "",
+            ["group_id"] = options.GroupId?.ToString() ?? "",
         }, cancellationToken).ConfigureAwait(false))
         {
             var r = VkWebApi.GetResponseOrThrow(doc, "shortVideo.create");
@@ -67,25 +66,26 @@ public sealed class VkClipsService
         // 3) Дождаться завершения кодирования (best-effort; без этого публикация может не пройти).
         await WaitEncodedAsync(api, videoId, ownerId, videoHash, cancellationToken).ConfigureAwait(false);
 
-        // 4) Метаданные: описание и приватность.
+        // 4) Метаданные: описание, приватность, дуэты.
         var editParams = new Dictionary<string, string>
         {
             ["video_id"] = videoId.ToString(),
             ["owner_id"] = ownerId.ToString(),
-            ["privacy_view"] = "all",
-            ["privacy_comment"] = "all",
+            ["privacy_view"] = VkClipPublishOptions.Privacy(options.View),
+            ["privacy_comment"] = VkClipPublishOptions.Privacy(options.Comment),
+            ["can_make_duet"] = options.AllowDuets ? "1" : "0",
         };
-        if (!string.IsNullOrEmpty(description))
-            editParams["description"] = description;
+        if (!string.IsNullOrEmpty(options.Description))
+            editParams["description"] = options.Description;
         using (await api.CallAsync("shortVideo.edit", editParams, cancellationToken).ConfigureAwait(false)) { }
 
-        // 5) Публикация.
+        // 5) Публикация (в т.ч. на стену; при необходимости — отложенная).
         using (var pub = await api.CallAsync("shortVideo.publish", new Dictionary<string, string>
         {
             ["video_id"] = videoId.ToString(),
             ["owner_id"] = ownerId.ToString(),
-            ["wallpost"] = alsoPostToWall ? "1" : "0",
-            ["publish_date"] = "0",
+            ["wallpost"] = options.PostToWall ? "1" : "0",
+            ["publish_date"] = (options.PublishAt?.ToUnixTimeSeconds() ?? 0).ToString(),
             ["license_agree"] = "1",
             ["ref"] = "clips_viewer",
         }, cancellationToken).ConfigureAwait(false))
