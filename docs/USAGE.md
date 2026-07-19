@@ -105,9 +105,26 @@ VkAttachmentSource.Document(bytes, "file.bin");
 VkAttachmentSource.Video(bytes, "clip.mp4", name: "Клип", description: "…");
 ```
 
-> **Про «клипы».** Клип = вертикальное короткое видео, загруженное этим же `video.save`-флоу.
-> Отдельная публикация именно в ленту «Клипы» (с редактором/обложкой) не реализована —
-> выделенные клип-методы веб-клиента через этот токен недоступны.
+Вложение `VkAttachmentSource.Video` — это обычное видео. Отдельная публикация **клипа**
+(VK Клипы) — ниже.
+
+## Клипы (VK Клипы)
+
+Публикация клипа повторяет флоу веб-клиента: `shortVideo.create` → загрузка на CDN →
+`shortVideo.encodeProgress` (ожидание кодирования) → `shortVideo.edit` (описание/приватность) →
+`shortVideo.publish`.
+
+```csharp
+var clip = await client.Clips.PublishFromFileAsync("clip.mp4", description: "Мой клип");
+Console.WriteLine(clip.Url);   // https://vk.ru/clip{owner}_{id}
+
+// из байтов; без записи на стену; от имени сообщества
+await client.Clips.PublishAsync(bytes, "clip.mp4", description: "…", alsoPostToWall: false, groupId: 12345);
+```
+
+Ограничения: минимальный размер файла — **16 КБ**; крупные клипы веб грузит чанками
+(здесь одиночный POST — годится для роликов умеренного размера); выбор конкретного кадра
+обложки не реализован (берётся кадр по умолчанию).
 
 ## Обработка ошибок
 

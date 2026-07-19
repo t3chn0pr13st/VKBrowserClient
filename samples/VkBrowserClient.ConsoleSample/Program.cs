@@ -115,6 +115,14 @@ try
             Console.WriteLine($"Запись опубликована: {post.Url}");
             break;
 
+        case "clip":
+            RequireArg(positionals, 0, "clip <путь-к-видео> [описание]");
+            var clipDesc = positionals.Count > 1 ? string.Join(' ', positionals.Skip(1)) : null;
+            Console.WriteLine("Публикую клип (создание → загрузка → кодирование → публикация)…");
+            var clip = await client.Clips.PublishFromFileAsync(positionals[0], clipDesc, cancellationToken: ct);
+            Console.WriteLine($"Клип опубликован: {clip.Url}");
+            break;
+
         default:
             Console.Error.WriteLine($"Неизвестная команда «{command}».\n");
             PrintHelp();
@@ -295,6 +303,7 @@ static void PrintHelp()
           history <peer_id> [count]               история сообщений диалога
           send <peer_id> <текст> [медиа]          отправить сообщение (с медиа)
           post <текст> [медиа]                    опубликовать запись (с медиа)
+          clip <путь-к-видео> [описание]          опубликовать клип
           export <файл>                           выгрузить выбранную сессию в файл
           import <файл>                           загрузить сессию из файла в выбранную
           sessions                                список сохранённых сессий

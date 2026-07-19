@@ -79,7 +79,8 @@ count=10&extended=1&fields=first_name,last_name,name&v=5.282&access_token=vk1.a.
 | Публикация записи | `wall.post` |
 | Загрузка фото | `photos.get{Messages,Wall}UploadServer` → upload → `photos.save{Messages,Wall}Photo` |
 | Загрузка документов | `docs.get{Messages,Wall}UploadServer` → upload → `docs.save` |
-| Загрузка видео/клипов | `video.save` → upload (`ovu.mycdn.me`) |
+| Загрузка видео | `video.save` → upload (`ovu.mycdn.me`) |
+| Публикация клипа | `shortVideo.create` → upload → `encodeProgress` → `edit` → `publish` |
 
 ## Загрузка фотографий (3 шага, как в вебе)
 
@@ -123,9 +124,20 @@ POST multipart на upload_url, поле "video_file"   →  { video_hash, size,
 
 Проверено на живых серверах: поля `file` и `video_file`. Видео обрабатывается асинхронно,
 но ссылка-вложение валидна сразу. `upload_config` (каналы/ретраи) — оптимизация параллельной
-загрузки; одиночного POST достаточно для небольших файлов. Выделенные клип-методы
-(`shortVideo.*`, `clips.create`) через web-токен недоступны, поэтому клип = вертикальное видео
-через тот же `video.save`.
+загрузки; одиночного POST достаточно для небольших файлов.
+
+**Клипы** (VK Клипы) — отдельный флоу `shortVideo.*` (снят с реальной публикации в вебе):
+
+```
+shortVideo.create(file_size, group_id)  →  { owner_id, video_id, upload_url (ovu.mycdn.me) }   # file_size ≥ 16384
+POST video_file на upload_url           →  { video_hash, size, owner_id, video_id }             # мелкие — 1 POST, крупные — чанки
+shortVideo.encodeProgress(video_id, owner_id, hash=video_hash)  →  { percents, is_ready, image:[кадры обложки] }   # опрос до is_ready
+shortVideo.edit(video_id, owner_id, description, privacy_view, privacy_comment)                 # метаданные/обложка
+shortVideo.publish(video_id, owner_id, wallpost, publish_date=0, license_agree=1, ref)          # публикация
+```
+
+Крупные клипы веб грузит на `upload.do` чанками (byte-range, 4 канала); для роликов умеренного
+размера достаточно одиночного POST полем `video_file`.
 
 ## Разбор входящих фото
 
