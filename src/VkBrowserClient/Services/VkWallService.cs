@@ -8,30 +8,33 @@ public sealed class VkWallService
     internal VkWallService(VkClient client) => _client = client;
 
     /// <summary>
-    /// Опубликовать запись на своей стене. Можно приложить фотографии (загрузятся автоматически).
+    /// Опубликовать запись с фотографиями (загрузятся автоматически).
+    /// Для файлов/видео/клипов используйте перегрузку с <see cref="VkAttachmentSource"/>.
+    /// <paramref name="friendsOnly"/> — опубликовать только для друзей.
+    /// </summary>
+    public Task<WallPostResult> PostAsync(
+        string? text, IReadOnlyList<VkImage>? photos = null, bool friendsOnly = false, CancellationToken cancellationToken = default)
+        => PostAsync(text, AttachmentUploads.FromPhotos(photos), friendsOnly, cancellationToken);
+
+    /// <summary>
+    /// Опубликовать запись с произвольными вложениями — фото, документы и видео/клипы (загрузятся автоматически).
     /// <paramref name="friendsOnly"/> — опубликовать только для друзей.
     /// </summary>
     public async Task<WallPostResult> PostAsync(
-        string? text, IReadOnlyList<VkImage>? photos = null, bool friendsOnly = false, CancellationToken cancellationToken = default)
+        string? text, IReadOnlyList<VkAttachmentSource> attachments, bool friendsOnly = false, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrEmpty(text) && (photos is null || photos.Count == 0))
-            throw new ArgumentException("Нужен текст записи или хотя бы одно фото.");
+        ArgumentNullException.ThrowIfNull(attachments);
+        if (string.IsNullOrEmpty(text) && attachments.Count == 0)
+            throw new ArgumentException("Нужен текст записи или хотя бы одно вложение.");
 
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
-
-        var attachments = new List<string>();
-        if (photos is { Count: > 0 })
-        {
-            var uploader = new VkPhotoUploader(api);
-            foreach (var img in photos)
-                attachments.Add(await uploader.UploadForWallAsync(img, cancellationToken).ConfigureAwait(false));
-        }
+        var refs = await AttachmentUploads.ResolveAllAsync(api, attachments, peerId: null, cancellationToken).ConfigureAwait(false);
 
         var parameters = new Dictionary<string, string>();
         if (!string.IsNullOrEmpty(text))
             parameters["message"] = text;
-        if (attachments.Count > 0)
-            parameters["attachments"] = string.Join(",", attachments);
+        if (refs.Count > 0)
+            parameters["attachments"] = string.Join(",", refs);
         if (friendsOnly)
             parameters["friends_only"] = "1";
 

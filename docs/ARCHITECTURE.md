@@ -78,6 +78,8 @@ count=10&extended=1&fields=first_name,last_name,name&v=5.282&access_token=vk1.a.
 | Отправка сообщения | `messages.send` |
 | Публикация записи | `wall.post` |
 | Загрузка фото | `photos.get{Messages,Wall}UploadServer` → upload → `photos.save{Messages,Wall}Photo` |
+| Загрузка документов | `docs.get{Messages,Wall}UploadServer` → upload → `docs.save` |
+| Загрузка видео/клипов | `video.save` → upload (`ovu.mycdn.me`) |
 
 ## Загрузка фотографий (3 шага, как в вебе)
 
@@ -98,6 +100,32 @@ count=10&extended=1&fields=first_name,last_name,name&v=5.282&access_token=vk1.a.
 - Поле файла именно **`photo`** (не `file1`). Пустой `"photo":""`/`"[]"` в ответе = файл не принят.
 - Слишком маленькие изображения (например 1×1) сервер **отклоняет** — нужен нормальный размер.
 - Сам `upload_url` уже подписан: cookies/токен для POST файла не нужны.
+
+## Загрузка документов и видео
+
+**Документы** (файлы, GIF, аудиосообщения) — тот же 3-шаговый паттерн, поле файла **`file`**:
+
+```
+docs.getMessagesUploadServer(peer_id, type) / docs.getWallUploadServer()  →  { upload_url }
+POST multipart на upload_url, поле "file"                                  →  { file: "<token>" }
+docs.save(file, title)   →  { type, <type>: { id, owner_id, access_key? } }
+   →  вложение: doc{owner_id}_{id}[_{access_key}]
+```
+
+**Видео** (в т.ч. клипы) — через `video.save`, загрузка на CDN OK/mycdn, поле **`video_file`**:
+
+```
+video.save(name, description, is_private, wallpost)
+   →  { upload_url (ovu.mycdn.me), video_id, owner_id, access_key, upload_config }
+POST multipart на upload_url, поле "video_file"   →  { video_hash, size, direct_link, ... }
+   →  вложение: video{owner_id}_{video_id}[_{access_key}]
+```
+
+Проверено на живых серверах: поля `file` и `video_file`. Видео обрабатывается асинхронно,
+но ссылка-вложение валидна сразу. `upload_config` (каналы/ретраи) — оптимизация параллельной
+загрузки; одиночного POST достаточно для небольших файлов. Выделенные клип-методы
+(`shortVideo.*`, `clips.create`) через web-токен недоступны, поэтому клип = вертикальное видео
+через тот же `video.save`.
 
 ## Разбор входящих фото
 

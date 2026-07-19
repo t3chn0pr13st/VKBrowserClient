@@ -43,38 +43,46 @@ public sealed class VkMessagesService
     }
 
     /// <summary>
-    /// Отправить сообщение в диалог. Можно приложить фотографии (загрузятся автоматически).
+    /// Отправить сообщение с фотографиями (загрузятся автоматически).
+    /// Для файлов/видео/клипов используйте перегрузку с <see cref="VkAttachmentSource"/>.
     /// </summary>
     /// <returns>id отправленного сообщения.</returns>
-    public async Task<long> SendMessageAsync(
+    public Task<long> SendMessageAsync(
         long peerId, string? text, IReadOnlyList<VkImage>? photos = null, CancellationToken cancellationToken = default)
-        => await SendMessageAsync(peerId, text, photos, randomId: null, cancellationToken).ConfigureAwait(false);
+        => SendMessageAsync(peerId, text, photos, randomId: null, cancellationToken);
 
     /// <summary>
-    /// Отправить сообщение с заданным <paramref name="randomId"/> для идемпотентных повторов.
+    /// Отправить сообщение с фотографиями и заданным <paramref name="randomId"/> для идемпотентных повторов.
     /// Один и тот же положительный идентификатор не создаёт дубликаты при повторной отправке.
     /// </summary>
-    public async Task<long> SendMessageAsync(
+    public Task<long> SendMessageAsync(
         long peerId,
         string? text,
         IReadOnlyList<VkImage>? photos,
         int? randomId,
         CancellationToken cancellationToken = default)
+        => SendMessageAsync(peerId, text, AttachmentUploads.FromPhotos(photos), randomId, cancellationToken);
+
+    /// <summary>
+    /// Отправить сообщение с произвольными вложениями — фото, документы (файлы/GIF/аудиосообщения) и видео/клипы.
+    /// Медиа загружаются автоматически. Положительный <paramref name="randomId"/> делает повтор идемпотентным.
+    /// </summary>
+    /// <returns>id отправленного сообщения.</returns>
+    public async Task<long> SendMessageAsync(
+        long peerId,
+        string? text,
+        IReadOnlyList<VkAttachmentSource> attachments,
+        int? randomId = null,
+        CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrEmpty(text) && (photos is null || photos.Count == 0))
-            throw new ArgumentException("Нужен текст сообщения или хотя бы одно фото.");
+        ArgumentNullException.ThrowIfNull(attachments);
+        if (string.IsNullOrEmpty(text) && attachments.Count == 0)
+            throw new ArgumentException("Нужен текст сообщения или хотя бы одно вложение.");
         if (randomId is <= 0)
             throw new ArgumentOutOfRangeException(nameof(randomId), "random_id должен быть положительным.");
 
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
-
-        var attachments = new List<string>();
-        if (photos is { Count: > 0 })
-        {
-            var uploader = new VkPhotoUploader(api);
-            foreach (var img in photos)
-                attachments.Add(await uploader.UploadForMessageAsync(peerId, img, cancellationToken).ConfigureAwait(false));
-        }
+        var refs = await AttachmentUploads.ResolveAllAsync(api, attachments, peerId, cancellationToken).ConfigureAwait(false);
 
         var parameters = new Dictionary<string, string>
         {
@@ -84,8 +92,8 @@ public sealed class VkMessagesService
         };
         if (!string.IsNullOrEmpty(text))
             parameters["message"] = text;
-        if (attachments.Count > 0)
-            parameters["attachment"] = string.Join(",", attachments);
+        if (refs.Count > 0)
+            parameters["attachment"] = string.Join(",", refs);
 
         using var doc = await api.CallAsync("messages.send", parameters, cancellationToken).ConfigureAwait(false);
         await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);

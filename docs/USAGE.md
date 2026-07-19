@@ -76,6 +76,39 @@ var post = await client.Wall.PostAsync(
 Console.WriteLine($"Опубликовано: {post.Url}");   // https://vk.ru/wall{owner}_{post}
 ```
 
+## Документы, видео и клипы
+
+Кроме фото можно прикладывать документы (файлы, GIF, аудиосообщения) и видео (в т.ч.
+вертикальные короткие — «клипы») через `VkAttachmentSource`. Медиа загружаются автоматически
+тем же способом, что и в веб-клиенте.
+
+```csharp
+var attachments = new[]
+{
+    VkAttachmentSource.Photo("photo.jpg"),
+    VkAttachmentSource.Document("report.pdf"),
+    VkAttachmentSource.Document("voice.ogg", VkDocType.AudioMessage),
+    VkAttachmentSource.Video("clip.mp4", name: "Мой клип"),
+};
+
+// в сообщение
+await client.Messages.SendMessageAsync(peerId: 100, text: "Файлы и видео", attachments);
+
+// на стену
+await client.Wall.PostAsync("Пост с видео", new[] { VkAttachmentSource.Video("clip.mp4") });
+```
+
+Из байтов (без файла на диске):
+
+```csharp
+VkAttachmentSource.Document(bytes, "file.bin");
+VkAttachmentSource.Video(bytes, "clip.mp4", name: "Клип", description: "…");
+```
+
+> **Про «клипы».** Клип = вертикальное короткое видео, загруженное этим же `video.save`-флоу.
+> Отдельная публикация именно в ленту «Клипы» (с редактором/обложкой) не реализована —
+> выделенные клип-методы веб-клиента через этот токен недоступны.
+
 ## Обработка ошибок
 
 | Исключение | Когда | Что делать |

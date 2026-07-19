@@ -14,8 +14,8 @@ using VkBrowserClient;
 // Команды:
 //   (без аргументов) | dialogs            — 10 последних диалогов
 //   history <peer_id> [count]             — история сообщений диалога
-//   send <peer_id> <текст> [--photo путь] — отправить сообщение (можно с фото)
-//   post <текст> [--photo путь]           — опубликовать запись на стене
+//   send <peer_id> <текст> [медиа]        — отправить сообщение (--photo/--doc/--video)
+//   post <текст> [медиа]                  — опубликовать запись (--photo/--doc/--video)
 //   export <файл>                         — выгрузить выбранную сессию в файл
 //   import <файл>                         — загрузить сессию из файла в выбранную
 //   sessions                              — список сохранённых сессий
@@ -34,7 +34,7 @@ var sessionsDir = Path.Combine(baseDir, "sessions");
 // Разбор аргументов: сначала вынимаем глобальную опцию --session/-s, затем команду.
 var (sessionArg, restArgs) = ExtractSessionOption(args);
 var command = restArgs.Length > 0 ? restArgs[0].ToLowerInvariant() : "dialogs";
-var (positionals, photoPaths) = SplitArgs(restArgs.Skip(1).ToArray());
+var (positionals, attachments) = SplitArgs(restArgs.Skip(1).ToArray());
 
 // Команды, не требующие сессии/авторизации.
 if (command is "help" or "-h" or "--help") { PrintHelp(); return 0; }
@@ -102,18 +102,16 @@ try
             break;
 
         case "send":
-            RequireArg(positionals, 0, "send <peer_id> <текст> [--photo путь]");
+            RequireArg(positionals, 0, "send <peer_id> <текст> [--photo|--doc|--video путь]");
             var sendPeer = long.Parse(positionals[0]);
             var text = string.Join(' ', positionals.Skip(1));
-            var images = LoadImages(photoPaths);
-            var msgId = await client.Messages.SendMessageAsync(sendPeer, text.Length > 0 ? text : null, images, ct);
+            var msgId = await client.Messages.SendMessageAsync(sendPeer, text.Length > 0 ? text : null, attachments, cancellationToken: ct);
             Console.WriteLine($"Сообщение отправлено. id = {msgId}");
             break;
 
         case "post":
             var postText = string.Join(' ', positionals);
-            var postImages = LoadImages(photoPaths);
-            var post = await client.Wall.PostAsync(postText.Length > 0 ? postText : null, postImages, cancellationToken: ct);
+            var post = await client.Wall.PostAsync(postText.Length > 0 ? postText : null, attachments, cancellationToken: ct);
             Console.WriteLine($"Запись опубликована: {post.Url}");
             break;
 
@@ -253,22 +251,19 @@ static (string? sessionName, string[] rest) ExtractSessionOption(string[] args)
     return (name, rest.ToArray());
 }
 
-static (List<string> positionals, List<string> photos) SplitArgs(string[] a)
+static (List<string> positionals, List<VkAttachmentSource> attachments) SplitArgs(string[] a)
 {
     var pos = new List<string>();
-    var photos = new List<string>();
+    var att = new List<VkAttachmentSource>();
     for (var i = 0; i < a.Length; i++)
     {
-        if (a[i] is "--photo" or "-p" && i + 1 < a.Length)
-            photos.Add(a[++i]);
-        else
-            pos.Add(a[i]);
+        if (a[i] is "--photo" or "-p" && i + 1 < a.Length) att.Add(VkAttachmentSource.Photo(a[++i]));
+        else if (a[i] is "--doc" && i + 1 < a.Length) att.Add(VkAttachmentSource.Document(a[++i]));
+        else if (a[i] is "--video" && i + 1 < a.Length) att.Add(VkAttachmentSource.Video(a[++i]));
+        else pos.Add(a[i]);
     }
-    return (pos, photos);
+    return (pos, att);
 }
-
-static IReadOnlyList<VkImage> LoadImages(IReadOnlyList<string> paths)
-    => paths.Select(VkImage.FromFile).ToList();
 
 static void RequireArg(List<string> positionals, int index, string usage)
 {
@@ -298,8 +293,8 @@ static void PrintHelp()
         Команды:
           dialogs                                 10 последних диалогов (по умолчанию)
           history <peer_id> [count]               история сообщений диалога
-          send <peer_id> <текст> [--photo путь]   отправить сообщение (можно с фото)
-          post <текст> [--photo путь]             опубликовать запись на стене
+          send <peer_id> <текст> [медиа]          отправить сообщение (с медиа)
+          post <текст> [медиа]                    опубликовать запись (с медиа)
           export <файл>                           выгрузить выбранную сессию в файл
           import <файл>                           загрузить сессию из файла в выбранную
           sessions                                список сохранённых сессий
@@ -310,6 +305,7 @@ static void PrintHelp()
           без опции и не в пайпе                  интерактивный выбор при запуске
           существующая сессия                     доступна под именем «default»
 
+        медиа: --photo <путь> | --doc <путь> | --video <путь> (можно несколько).
         peer_id: id пользователя, -id сообщества, или 2000000000+chat_id.
         VK_SESSION_PATH задаёт конкретный файл сессии в обход выбора.
         """);

@@ -22,6 +22,7 @@ public sealed class VkWebApi : IDisposable
     private readonly VkSession _session;
     private readonly VkClientOptions _options;
     private readonly HttpClient _http;
+    private readonly HttpClient _uploadHttp;
     private readonly SemaphoreSlim _tokenGate = new(1, 1);
 
     public VkWebApi(VkSession session, VkClientOptions options)
@@ -46,6 +47,11 @@ public sealed class VkWebApi : IDisposable
         _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", session.UserAgent ?? _options.UserAgent);
         _http.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8");
         _http.Timeout = TimeSpan.FromSeconds(30);
+
+        // Отдельный клиент для загрузки медиа: подписанные upload-URL не требуют cookies,
+        // а таймаут больше (видео/файлы могут грузиться дольше обычного API-вызова).
+        _uploadHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        _uploadHttp.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", session.UserAgent ?? _options.UserAgent);
     }
 
     /// <summary>Гарантирует наличие валидного web-токена (обновляет при необходимости).</summary>
@@ -106,38 +112,43 @@ public sealed class VkWebApi : IDisposable
     }
 
     /// <summary>
-    /// Загрузить изображение на сервер загрузки VK (URL из photos.get*UploadServer).
-    /// Поле формы — «photo» (проверено на живом сервере). Токен/куки не требуются: URL уже подписан.
+    /// Загрузить файл (multipart/form-data) на подписанный upload-URL VK и вернуть JSON-ответ.
+    /// Токен/куки не требуются: URL уже подписан. Имя поля зависит от типа медиа
+    /// (photo — фото, file — документ, video_file — видео; всё проверено на живых серверах).
+    /// Вызывающий обязан вызвать Dispose у возвращённого документа.
     /// </summary>
-    public async Task<PhotoUploadResult> UploadPhotoAsync(string uploadUrl, VkImage image, CancellationToken cancellationToken = default)
+    public async Task<JsonDocument> UploadFileAsync(
+        string uploadUrl, string fieldName, byte[] bytes, string fileName, string contentType,
+        CancellationToken cancellationToken = default)
     {
         using var content = new MultipartFormDataContent();
-        var file = new ByteArrayContent(image.Bytes);
-        file.Headers.ContentType = new MediaTypeHeaderValue(image.ContentType);
-        content.Add(file, "photo", image.FileName);
+        var file = new ByteArrayContent(bytes);
+        file.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+        content.Add(file, fieldName, fileName);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl) { Content = content };
-        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = await _uploadHttp.SendAsync(request, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-        JsonDocument doc;
-        try { doc = JsonDocument.Parse(body); }
+        try { return JsonDocument.Parse(body); }
         catch (JsonException ex) { throw new VkClientException($"Сервер загрузки вернул не-JSON ответ: {Trim(body)}", ex); }
+    }
 
-        using (doc)
-        {
-            var root = doc.RootElement;
-            var photo = root.TryGetProperty("photo", out var p) ? p.GetString() : null;
-            // Пустой "photo" ("" или "[]") = файл не принят (обычно слишком маленькое изображение).
-            if (string.IsNullOrEmpty(photo) || photo == "[]")
-                throw new VkClientException(
-                    "Сервер загрузки не принял изображение (слишком маленькое или неподдерживаемый формат).");
+    /// <summary>Загрузить изображение на сервер фото VK (URL из photos.get*UploadServer). Поле формы — «photo».</summary>
+    public async Task<PhotoUploadResult> UploadPhotoAsync(string uploadUrl, VkImage image, CancellationToken cancellationToken = default)
+    {
+        using var doc = await UploadFileAsync(uploadUrl, "photo", image.Bytes, image.FileName, image.ContentType, cancellationToken)
+                              .ConfigureAwait(false);
+        var root = doc.RootElement;
+        var photo = root.TryGetProperty("photo", out var p) ? p.GetString() : null;
+        // Пустой "photo" ("" или "[]") = файл не принят (обычно слишком маленькое изображение).
+        if (string.IsNullOrEmpty(photo) || photo == "[]")
+            throw new VkClientException("Сервер загрузки не принял изображение (слишком маленькое или неподдерживаемый формат).");
 
-            return new PhotoUploadResult(
-                Server: root.TryGetProperty("server", out var s) && s.TryGetInt64(out var sv) ? sv : 0,
-                Photo: photo,
-                Hash: root.TryGetProperty("hash", out var h) ? h.GetString() ?? "" : "");
-        }
+        return new PhotoUploadResult(
+            Server: root.TryGetProperty("server", out var s) && s.TryGetInt64(out var sv) ? sv : 0,
+            Photo: photo,
+            Hash: root.TryGetProperty("hash", out var h) ? h.GetString() ?? "" : "");
     }
 
     /// <summary>Достаёт поле "response" или бросает <see cref="VkClientException"/> (не роняет KeyNotFoundException).</summary>
@@ -326,6 +337,7 @@ public sealed class VkWebApi : IDisposable
     public void Dispose()
     {
         _http.Dispose();
+        _uploadHttp.Dispose();
         _tokenGate.Dispose();
     }
 }
