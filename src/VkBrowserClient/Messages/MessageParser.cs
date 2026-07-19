@@ -105,11 +105,22 @@ internal static class MessageParser
     }
 
     /// <summary>
-    /// messages.send возвращает либо число (id сообщения для одного peer),
-    /// либо массив объектов {peer_id, message_id, …} при пакетной отправке.
+    /// messages.send возвращает id отправленного сообщения в одном из форматов:
+    ///  • объект {"cmid":N,"message_id":M} (текущий веб-формат для одного peer);
+    ///  • просто число (старый формат);
+    ///  • массив [{peer_id, message_id, …}] при пакетной отправке на несколько peer.
+    /// Возвращаем message_id (глобальный id сообщения).
     /// </summary>
     public static long ParseSendResult(JsonElement response)
     {
+        if (response.ValueKind == JsonValueKind.Object)
+        {
+            if (response.TryGetProperty("message_id", out var mid) && mid.TryGetInt64(out var mv))
+                return mv;
+            if (response.TryGetProperty("cmid", out var cmid) && cmid.TryGetInt64(out var cv))
+                return cv;
+        }
+
         if (response.ValueKind == JsonValueKind.Number && response.TryGetInt64(out var idNum))
             return idNum;
 
@@ -119,7 +130,7 @@ internal static class MessageParser
             {
                 if (el.TryGetProperty("message_id", out var mid) && mid.TryGetInt64(out var mv))
                     return mv;
-                if (el.TryGetProperty("conversation_message_id", out var cmid) && cmid.TryGetInt64(out var cv))
+                if (el.TryGetProperty("conversation_message_id", out var ccmid) && ccmid.TryGetInt64(out var cv))
                     return cv;
             }
         }
