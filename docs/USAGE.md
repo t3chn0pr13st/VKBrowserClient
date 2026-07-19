@@ -49,6 +49,14 @@ foreach (var m in history.Items)
 // только текст
 await client.Messages.SendMessageAsync(peerId: 100, text: "Привет!");
 
+// стабильный random_id для безопасного повтора фоновой задачи
+await client.Messages.SendMessageAsync(
+    peerId: 100,
+    text: "Привет!",
+    photos: null,
+    randomId: 184204,
+    cancellationToken: cancellationToken);
+
 // текст + несколько фото (загрузятся автоматически)
 var images = new[] { VkImage.FromFile("a.jpg"), VkImage.FromFile("b.png") };
 long messageId = await client.Messages.SendMessageAsync(peerId: 100, text: "Смотри", photos: images);

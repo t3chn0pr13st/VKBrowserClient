@@ -48,9 +48,23 @@ public sealed class VkMessagesService
     /// <returns>id отправленного сообщения.</returns>
     public async Task<long> SendMessageAsync(
         long peerId, string? text, IReadOnlyList<VkImage>? photos = null, CancellationToken cancellationToken = default)
+        => await SendMessageAsync(peerId, text, photos, randomId: null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Отправить сообщение с заданным <paramref name="randomId"/> для идемпотентных повторов.
+    /// Один и тот же положительный идентификатор не создаёт дубликаты при повторной отправке.
+    /// </summary>
+    public async Task<long> SendMessageAsync(
+        long peerId,
+        string? text,
+        IReadOnlyList<VkImage>? photos,
+        int? randomId,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(text) && (photos is null || photos.Count == 0))
             throw new ArgumentException("Нужен текст сообщения или хотя бы одно фото.");
+        if (randomId is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(randomId), "random_id должен быть положительным.");
 
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
 
@@ -66,7 +80,7 @@ public sealed class VkMessagesService
         {
             ["peer_id"] = peerId.ToString(),
             // random_id защищает от повторной отправки при ретраях.
-            ["random_id"] = Random.Shared.Next(1, int.MaxValue).ToString(),
+            ["random_id"] = (randomId ?? Random.Shared.Next(1, int.MaxValue)).ToString(),
         };
         if (!string.IsNullOrEmpty(text))
             parameters["message"] = text;
