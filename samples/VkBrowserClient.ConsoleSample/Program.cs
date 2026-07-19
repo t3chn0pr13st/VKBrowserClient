@@ -124,6 +124,13 @@ try
             Console.WriteLine($"Клип опубликован: {clip.Url}");
             break;
 
+        case "editclip":
+            RequireArg(positionals, 1, "editclip <owner_id> <video_id> <новое описание>");
+            var applied = await client.Clips.EditDescriptionAsync(
+                long.Parse(positionals[0]), long.Parse(positionals[1]), string.Join(' ', positionals.Skip(2)), ct);
+            Console.WriteLine($"Описание клипа обновлено: {applied}");
+            break;
+
         default:
             Console.Error.WriteLine($"Неизвестная команда «{command}».\n");
             PrintHelp();
@@ -305,6 +312,7 @@ static void PrintHelp()
           send <peer_id> <текст> [медиа]          отправить сообщение (с медиа)
           post <текст> [медиа]                    опубликовать запись (с медиа)
           clip <путь-к-видео> [описание]          опубликовать клип
+          editclip <owner_id> <video_id> <опис.> изменить описание клипа
           export <файл>                           выгрузить выбранную сессию в файл
           import <файл>                           загрузить сессию из файла в выбранную
           sessions                                список сохранённых сессий

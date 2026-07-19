@@ -97,6 +97,37 @@ public sealed class VkClipsService
         return new VkClipResult { OwnerId = ownerId, VideoId = videoId };
     }
 
+    /// <summary>
+    /// Изменить описание уже созданного/опубликованного клипа (video{owner}_{id}).
+    /// Обновляет только описание — приватность и прочие настройки не сбрасываются.
+    /// </summary>
+    /// <returns>Применённое описание (по ответу API).</returns>
+    public async Task<string> EditDescriptionAsync(long ownerId, long videoId, string description, CancellationToken cancellationToken = default)
+    {
+        var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        using var doc = await api.CallAsync("shortVideo.edit", new Dictionary<string, string>
+        {
+            ["video_id"] = videoId.ToString(),
+            ["owner_id"] = ownerId.ToString(),
+            ["description"] = description ?? "",
+        }, cancellationToken).ConfigureAwait(false);
+
+        var r = VkWebApi.GetResponseOrThrow(doc, "shortVideo.edit");
+        await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        // Ответ shortVideo.edit отражает применённое описание.
+        return r.TryGetProperty("video", out var v) && v.TryGetProperty("description", out var d)
+            ? d.GetString() ?? description ?? ""
+            : description ?? "";
+    }
+
+    /// <summary>Изменить описание клипа, полученного из <see cref="PublishAsync"/>.</summary>
+    public Task<string> EditDescriptionAsync(VkClipResult clip, string description, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(clip);
+        return EditDescriptionAsync(clip.OwnerId, clip.VideoId, description, cancellationToken);
+    }
+
     private static async Task WaitEncodedAsync(VkWebApi api, long videoId, long ownerId, string hash, CancellationToken ct)
     {
         // Опрос прогресса кодирования до ~90 секунд.

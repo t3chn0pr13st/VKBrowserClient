@@ -138,6 +138,14 @@ await client.Clips.PublishFromFileAsync("clip.mp4", new VkClipPublishOptions
 await client.Clips.PublishAsync(bytes, "clip.mp4", new VkClipPublishOptions { Description = "…" });
 ```
 
+Изменить описание уже опубликованного клипа (приватность и прочее не сбрасываются):
+
+```csharp
+await client.Clips.EditDescriptionAsync(ownerId, videoId, "Новое описание");
+// или по результату публикации:
+await client.Clips.EditDescriptionAsync(clip, "Новое описание");
+```
+
 Ограничения: минимальный размер файла — **16 КБ**; крупные клипы веб грузит чанками
 (здесь одиночный POST — годится для роликов умеренного размера); выбор конкретного кадра
 обложки не реализован (берётся кадр по умолчанию).
