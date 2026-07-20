@@ -35,7 +35,7 @@ public sealed class VkWebApi : IDisposable
         var container = new CookieContainer(capacity: 10_000, perDomainCapacity: 1_000, maxCookieSize: 8192);
         PopulateCookies(container, session.Cookies ?? []);
 
-        var handler = new HttpClientHandler
+        var handler = options.ApiHttpMessageHandlerFactory?.Invoke() ?? new HttpClientHandler
         {
             CookieContainer = container,
             UseCookies = true,
@@ -51,12 +51,12 @@ public sealed class VkWebApi : IDisposable
         // Отдельный клиент для загрузки медиа: подписанные upload-URL не требуют cookies,
         // таймаут больше (видео/файлы грузятся дольше), и НЕ следуем редиректам:
         // часть upload-серверов pu.vk.ru отвечает 3xx, следование которому меняет POST→GET и даёт 405.
-        var uploadHandler = new HttpClientHandler
+        var uploadHandler = options.UploadHttpMessageHandlerFactory?.Invoke() ?? new HttpClientHandler
         {
             AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.All,
         };
-        _uploadHttp = new HttpClient(uploadHandler, disposeHandler: true) { Timeout = TimeSpan.FromMinutes(5) };
+        _uploadHttp = new HttpClient(uploadHandler, disposeHandler: true) { Timeout = options.UploadTimeout };
         _uploadHttp.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", session.UserAgent ?? _options.UserAgent);
     }
 
@@ -123,27 +123,62 @@ public sealed class VkWebApi : IDisposable
     /// (photo — фото, file — документ, video_file — видео; всё проверено на живых серверах).
     /// Вызывающий обязан вызвать Dispose у возвращённого документа.
     /// </summary>
-    public async Task<JsonDocument> UploadFileAsync(
+    public Task<JsonDocument> UploadFileAsync(
         string uploadUrl, string fieldName, byte[] bytes, string fileName, string contentType,
+        CancellationToken cancellationToken = default) =>
+        UploadFileAsync(
+            uploadUrl,
+            fieldName,
+            VkUploadSource.FromBytes(bytes, fileName, contentType),
+            cancellationToken);
+
+    /// <summary>
+    /// Потоково загрузить повторно открываемый файл на подписанный upload-URL VK.
+    /// Файл не буферизуется целиком; при ретрае вызывающий код повторно открывает источник.
+    /// </summary>
+    public async Task<JsonDocument> UploadFileAsync(
+        string uploadUrl,
+        string fieldName,
+        VkUploadSource source,
         CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(uploadUrl);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fieldName);
+        ArgumentNullException.ThrowIfNull(source);
+
+        await using var sourceStream = await source.OpenReadAsync(cancellationToken).ConfigureAwait(false);
         using var content = new MultipartFormDataContent();
-        var file = new ByteArrayContent(bytes);
-        file.Headers.ContentType = new MediaTypeHeaderValue(contentType);
-        content.Add(file, fieldName, fileName);
+        var file = new StreamContent(sourceStream, bufferSize: 128 * 1024);
+        file.Headers.ContentType = new MediaTypeHeaderValue(source.ContentType);
+        file.Headers.ContentLength = source.Length;
+        content.Add(file, fieldName, source.FileName);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl) { Content = content };
         using var response = await _uploadHttp.SendAsync(request, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+            throw new VkClientException(
+                $"Сервер загрузки вернул HTTP {(int)response.StatusCode}: {Trim(body)}");
 
         try { return JsonDocument.Parse(body); }
         catch (JsonException ex) { throw new VkClientException($"Сервер загрузки вернул не-JSON ответ: {Trim(body)}", ex); }
     }
 
     /// <summary>Загрузить изображение на сервер фото VK (URL из photos.get*UploadServer). Поле формы — «photo».</summary>
-    public async Task<PhotoUploadResult> UploadPhotoAsync(string uploadUrl, VkImage image, CancellationToken cancellationToken = default)
+    public Task<PhotoUploadResult> UploadPhotoAsync(string uploadUrl, VkImage image, CancellationToken cancellationToken = default)
+        => UploadPhotoAsync(
+            uploadUrl,
+            VkUploadSource.FromBytes(image.Bytes, image.FileName, image.ContentType),
+            cancellationToken);
+
+    /// <summary>Потоково загрузить изображение на сервер фото VK. Поле формы — «photo».</summary>
+    public async Task<PhotoUploadResult> UploadPhotoAsync(
+        string uploadUrl,
+        VkUploadSource image,
+        CancellationToken cancellationToken = default)
     {
-        using var doc = await UploadFileAsync(uploadUrl, "photo", image.Bytes, image.FileName, image.ContentType, cancellationToken)
+        using var doc = await UploadFileAsync(uploadUrl, "photo", image, cancellationToken)
                               .ConfigureAwait(false);
         var root = doc.RootElement;
         var photo = root.TryGetProperty("photo", out var p) ? p.GetString() : null;

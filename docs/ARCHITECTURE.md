@@ -136,8 +136,25 @@ shortVideo.edit(video_id, owner_id, description, privacy_view, privacy_comment) 
 shortVideo.publish(video_id, owner_id, wallpost, publish_date=0, license_agree=1, ref)          # публикация
 ```
 
-Крупные клипы веб грузит на `upload.do` чанками (byte-range, 4 канала); для роликов умеренного
-размера достаточно одиночного POST полем `video_file`.
+Крупные клипы веб грузит на `upload.do` чанками (byte-range, 4 канала). Библиотека отправляет
+один потоковый multipart POST полем `video_file`: файл не буферизуется целиком в памяти,
+а `VkUploadSource` повторно открывает поток для сетевого ретрая.
+
+## Публикация в сообщество
+
+Для записи сообщества используется положительный `group_id` на этапах загрузки медиа и
+отрицательный `owner_id` на этапе публикации:
+
+```
+photos.getWallUploadServer(group_id) → photos.saveWallPhoto(group_id, ...)
+docs.getWallUploadServer(group_id)   → docs.save(...)
+video.save(group_id, ...)            → upload
+wall.post(owner_id=-group_id, from_group=1, attachments=...)
+```
+
+Порядок ссылок в `attachments` совпадает с порядком `VkAttachmentSource`. При изменении
+подписи `wall.getById` восстанавливает текущие ссылки вложений, после чего `wall.edit`
+получает новый текст вместе с теми же вложениями.
 
 ## Разбор входящих фото
 

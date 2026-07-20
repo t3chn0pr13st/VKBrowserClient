@@ -76,6 +76,31 @@ var post = await client.Wall.PostAsync(
 Console.WriteLine($"Опубликовано: {post.Url}");   // https://vk.ru/wall{owner}_{post}
 ```
 
+Публикация фото, карусели или смешанного набора медиа от имени сообщества:
+
+```csharp
+var attachments = new[]
+{
+    VkAttachmentSource.Photo("first.jpg"),
+    VkAttachmentSource.Video("reel.mp4", name: "Reel"),
+    VkAttachmentSource.Photo("second.jpg"),
+};
+var communityPost = await client.Wall.PostToCommunityAsync(
+    communityId: 12345,
+    text: "Подпись",
+    attachments: attachments);
+
+Console.WriteLine(communityPost.Reference); // wall-12345_{post_id}
+```
+
+Изменение подписи сохраняет текущие вложения: библиотека сначала читает их через
+`wall.getById`, затем передаёт обратно в `wall.edit`. Если вложение нельзя безопасно
+восстановить, изменение отменяется с `VkClientException`.
+
+```csharp
+await client.Wall.EditTextAsync(communityPost.OwnerId, communityPost.PostId, "Новая подпись");
+```
+
 ## Документы, видео и клипы
 
 Кроме фото можно прикладывать документы (файлы, GIF, аудиосообщения) и видео (в т.ч.
@@ -103,6 +128,19 @@ await client.Wall.PostAsync("Пост с видео", new[] { VkAttachmentSource
 ```csharp
 VkAttachmentSource.Document(bytes, "file.bin");
 VkAttachmentSource.Video(bytes, "clip.mp4", name: "Клип", description: "…");
+```
+
+Для файлов из собственного хранилища используйте повторно открываемый потоковый источник.
+Фабрика вызывается заново при сетевом ретрае:
+
+```csharp
+var source = VkUploadSource.Create(
+    fileName: "reel.mp4",
+    contentType: "video/mp4",
+    length: asset.SizeBytes,
+    openReadAsync: async ct => await storage.OpenReadAsync(asset.Path, ct));
+
+var attachment = VkAttachmentSource.Video(source, name: "Reel");
 ```
 
 Вложение `VkAttachmentSource.Video` — это обычное видео. Отдельная публикация **клипа**
@@ -136,6 +174,13 @@ await client.Clips.PublishFromFileAsync("clip.mp4", new VkClipPublishOptions
 
 // из байтов:
 await client.Clips.PublishAsync(bytes, "clip.mp4", new VkClipPublishOptions { Description = "…" });
+
+// из повторно открываемого потока без буферизации всего ролика:
+await client.Clips.PublishAsync(source, new VkClipPublishOptions
+{
+    GroupId = 12345,
+    Description = "…"
+});
 ```
 
 Изменить описание уже опубликованного клипа (приватность и прочее не сбрасываются):
@@ -144,10 +189,14 @@ await client.Clips.PublishAsync(bytes, "clip.mp4", new VkClipPublishOptions { De
 await client.Clips.EditDescriptionAsync(ownerId, videoId, "Новое описание");
 // или по результату публикации:
 await client.Clips.EditDescriptionAsync(clip, "Новое описание");
+
+var status = await client.Clips.GetProcessingStatusAsync(clip);
+if (status.State == VkVideoProcessingState.Processing)
+    Console.WriteLine("VK ещё обрабатывает клип");
 ```
 
 Ограничения: минимальный размер файла — **16 КБ**; крупные клипы веб грузит чанками
-(здесь одиночный POST — годится для роликов умеренного размера); выбор конкретного кадра
+(здесь потоковый одиночный POST); выбор конкретного кадра
 обложки не реализован (берётся кадр по умолчанию).
 
 ## Обработка ошибок
@@ -171,6 +220,8 @@ dotnet run --project samples/VkBrowserClient.ConsoleSample -- [--session <имя
 | `history <peer_id> [count]` | история сообщений |
 | `send <peer_id> <текст> [--photo путь]` | отправить сообщение (можно с фото) |
 | `post <текст> [--photo путь]` | опубликовать запись |
+| `postgroup <group_id> <текст> [медиа]` | опубликовать запись сообщества |
+| `clipgroup <group_id> <видео> [описание]` | опубликовать Клип сообщества |
 | `export <файл>` | выгрузить выбранную сессию (для сервера) |
 | `import <файл>` | загрузить сессию из файла в выбранную |
 | `sessions` | список сохранённых сессий |

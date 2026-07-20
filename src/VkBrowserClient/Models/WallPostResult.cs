@@ -11,4 +11,7 @@ public sealed class WallPostResult
 
     /// <summary>Ссылка на запись вида https://vk.ru/wall{owner}_{post}.</summary>
     public string Url => $"https://vk.ru/wall{OwnerId}_{PostId}";
+
+    /// <summary>Ссылка-вложение/идентификатор вида wall{owner}_{post}.</summary>
+    public string Reference => $"wall{OwnerId}_{PostId}";
 }

@@ -23,3 +23,6 @@ jobs:
 
       - name: Build (Release)
         run: dotnet build VKBrowserClient.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test VKBrowserClient.slnx -c Release --no-build --no-restore

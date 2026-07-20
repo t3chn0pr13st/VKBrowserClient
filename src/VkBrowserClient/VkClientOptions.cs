@@ -39,6 +39,9 @@ public sealed class VkClientOptions
     /// </summary>
     public TimeSpan TokenExpirySkew { get; set; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>Максимальное время одного потокового upload-запроса.</summary>
+    public TimeSpan UploadTimeout { get; set; } = TimeSpan.FromMinutes(30);
+
     /// <summary>
     /// Фабрика интерактивного аутентификатора. По умолчанию — Playwright.
     /// Позволяет подменить способ входа (например, в тестах).
@@ -50,4 +53,8 @@ public sealed class VkClientOptions
     /// В консольном примере обычно задаётся как <c>Console.WriteLine</c>.
     /// </summary>
     public Action<string>? StatusCallback { get; set; }
+
+    // Test seams remain internal so the public client does not expose transport internals.
+    internal Func<HttpMessageHandler>? ApiHttpMessageHandlerFactory { get; set; }
+    internal Func<HttpMessageHandler>? UploadHttpMessageHandlerFactory { get; set; }
 }

@@ -24,11 +24,24 @@ public sealed class VkClipsService
     /// <summary>Опубликовать клип из файла.</summary>
     public Task<VkClipResult> PublishFromFileAsync(
         string path, VkClipPublishOptions? options = null, CancellationToken cancellationToken = default)
-        => PublishAsync(File.ReadAllBytes(path), Path.GetFileName(path), options, cancellationToken);
+        => PublishAsync(VkUploadSource.FromFile(path, "video/mp4"), options, cancellationToken);
 
     /// <summary>Опубликовать клип из байтов видео (вертикальное короткое видео).</summary>
-    public async Task<VkClipResult> PublishAsync(
+    public Task<VkClipResult> PublishAsync(
         byte[] video, string fileName, VkClipPublishOptions? options = null, CancellationToken cancellationToken = default)
+        => PublishAsync(
+            VkUploadSource.FromBytes(video, fileName, "video/mp4"),
+            options,
+            cancellationToken);
+
+    /// <summary>
+    /// Потоково опубликовать клип из повторно открываемого источника. Файл не читается
+    /// целиком в память; источник может быть открыт повторно при сетевом ретрае.
+    /// </summary>
+    public async Task<VkClipResult> PublishAsync(
+        VkUploadSource video,
+        VkClipPublishOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(video);
         if (video.Length < 16384)
@@ -55,13 +68,14 @@ public sealed class VkClipsService
         }
 
         // 2) Загрузка файла на CDN (поле video_file), как у обычного видео.
-        string videoHash;
-        using (var up = await api.UploadFileAsync(uploadUrl, "video_file", video, fileName, "video/mp4", cancellationToken).ConfigureAwait(false))
+        var videoHash = await VkUploadRetry.ExecuteAsync(async () =>
         {
+            using var up = await api.UploadFileAsync(uploadUrl, "video_file", video, cancellationToken)
+                .ConfigureAwait(false);
             if (up.RootElement.TryGetProperty("error", out _))
                 throw new VkClientException($"CDN отклонил клип: {up.RootElement.GetRawText()}");
-            videoHash = up.RootElement.TryGetProperty("video_hash", out var vh) ? vh.GetString() ?? "" : "";
-        }
+            return up.RootElement.TryGetProperty("video_hash", out var vh) ? vh.GetString() ?? "" : "";
+        }, cancellationToken).ConfigureAwait(false);
 
         // 3) Дождаться завершения кодирования (best-effort; без этого публикация может не пройти).
         await WaitEncodedAsync(api, videoId, ownerId, videoHash, cancellationToken).ConfigureAwait(false);
@@ -121,11 +135,66 @@ public sealed class VkClipsService
             : description ?? "";
     }
 
-    /// <summary>Изменить описание клипа, полученного из <see cref="PublishAsync"/>.</summary>
+    /// <summary>Изменить описание клипа, полученного из потоковой перегрузки PublishAsync.</summary>
     public Task<string> EditDescriptionAsync(VkClipResult clip, string description, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(clip);
         return EditDescriptionAsync(clip.OwnerId, clip.VideoId, description, cancellationToken);
+    }
+
+    /// <summary>Проверить, завершил ли VK обработку опубликованного клипа.</summary>
+    public async Task<VkVideoProcessingResult> GetProcessingStatusAsync(
+        long ownerId,
+        long videoId,
+        CancellationToken cancellationToken = default)
+    {
+        if (ownerId == 0)
+            throw new ArgumentOutOfRangeException(nameof(ownerId));
+        if (videoId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(videoId));
+
+        var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        using var doc = await api.CallAsync("video.get", new Dictionary<string, string>
+        {
+            ["videos"] = $"{ownerId}_{videoId}",
+            ["count"] = "1",
+        }, cancellationToken).ConfigureAwait(false);
+        var response = VkWebApi.GetResponseOrThrow(doc, "video.get");
+        var item = response.TryGetProperty("items", out var items) &&
+                   items.ValueKind == JsonValueKind.Array &&
+                   items.GetArrayLength() > 0
+            ? items[0]
+            : default;
+
+        await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (item.ValueKind != JsonValueKind.Object)
+        {
+            return new VkVideoProcessingResult
+            {
+                OwnerId = ownerId,
+                VideoId = videoId,
+                State = VkVideoProcessingState.NotFound
+            };
+        }
+
+        var processing = item.TryGetProperty("processing", out var state) &&
+                         (state.ValueKind == JsonValueKind.True ||
+                          state.ValueKind == JsonValueKind.Number && state.TryGetInt32(out var numeric) && numeric != 0);
+        return new VkVideoProcessingResult
+        {
+            OwnerId = ownerId,
+            VideoId = videoId,
+            State = processing ? VkVideoProcessingState.Processing : VkVideoProcessingState.Ready
+        };
+    }
+
+    /// <summary>Проверить обработку клипа, возвращённого <see cref="PublishAsync(VkUploadSource,VkClipPublishOptions?,CancellationToken)"/>.</summary>
+    public Task<VkVideoProcessingResult> GetProcessingStatusAsync(
+        VkClipResult clip,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(clip);
+        return GetProcessingStatusAsync(clip.OwnerId, clip.VideoId, cancellationToken);
     }
 
     private static async Task WaitEncodedAsync(VkWebApi api, long videoId, long ownerId, string hash, CancellationToken ct)

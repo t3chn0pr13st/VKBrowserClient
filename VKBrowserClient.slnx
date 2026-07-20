@@ -5,4 +5,7 @@
   <Folder Name="/src/">
     <Project Path="src/VkBrowserClient/VkBrowserClient.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/VkBrowserClient.Tests/VkBrowserClient.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -15,8 +15,9 @@
 - 💾 Сохранение cookie-сессии и **авто-обновление web-токена** из cookies (фон без UI).
 - 💬 Чтение диалогов и истории сообщений (с фотографиями).
 - 📤 Отправка сообщений с медиа: фото, документы (файлы/GIF/аудиосообщения), видео.
-- 🖼 Публикация записей на стене с фото, документами и видео.
-- 🎬 Публикация клипов (VK Клипы) — полный флоу `shortVideo.*` (описание, приватность).
+- 🖼 Публикация записей на личной стене и в сообществах с фото, каруселями, документами и видео.
+- 🎬 Публикация клипов (VK Клипы) — полный флоу `shortVideo.*`, изменение описания и проверка обработки.
+- 🌊 Потоковая загрузка медиа без чтения больших файлов целиком в память, с безопасным повторным открытием при ретраях.
 - 📦 Экспорт/импорт сессии (файл или base64) для переноса на сервер без браузера.
 - 🧩 Готов к подключению как NuGet-пакет (приватно, через GitHub Packages).
 
@@ -65,6 +66,7 @@ foreach (var c in dialogs.Items) Console.WriteLine($"[{c.PeerType}] {c.Title}");
 
 await client.Messages.SendMessageAsync(peerId: 100, text: "Привет", photos: new[] { VkImage.FromFile("pic.jpg") });
 await client.Wall.PostAsync("Пост с картинкой", new[] { VkImage.FromFile("cover.jpg") });
+await client.Wall.PostToCommunityAsync(12345, "Пост", [VkAttachmentSource.Photo("cover.jpg")]);
 ```
 
 Полное руководство по API и CLI — в [docs/USAGE.md](docs/USAGE.md).
@@ -85,7 +87,7 @@ src/VkBrowserClient/            — библиотека (net10.0)
   Api/VkWebApi.cs               — web_token + вызовы web.api.vk.ru + загрузка фото
   Auth/PlaywrightAuthenticator  — интерактивный вход через браузер
   Session/                      — VkSession, ISessionStore, FileSessionStore, сериализация
-  Services/                     — VkMessagesService, VkWallService, VkPhotoUploader
+  Services/                     — VkMessagesService, VkWallService, VkMediaUploader, VkClipsService
   Messages/                     — разбор ответов (диалоги, история)
   Models/                       — Conversation, VkMessage, VkImage, WallPostResult, …
 samples/VkBrowserClient.ConsoleSample/   — консольный пример со всеми командами
@@ -103,7 +105,7 @@ docs/                           — документация
 - Опирается на недокументированные эндпоинты веб-ВК — возможны поломки при изменениях на их стороне.
 - Реалтайм (LongPoll `queuev4.vk.ru`) не реализован — только запрос/ответ.
 - При чтении разбираются только фото-вложения; прочие типы лишь подсчитываются.
-- Клипы: одиночный POST (крупные клипы веб грузит чанками); выбор кадра обложки не реализован.
+- Клипы: потоковый одиночный POST (крупные клипы веб грузит чанками); выбор кадра обложки не реализован.
 
 ## Лицензия
 

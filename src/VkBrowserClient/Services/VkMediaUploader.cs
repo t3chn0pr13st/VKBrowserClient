@@ -12,30 +12,58 @@ namespace VkBrowserClient;
 /// </summary>
 internal sealed class VkMediaUploader(VkWebApi api)
 {
-    private const int UploadAttempts = 3;
-
     // --- Фото -----------------------------------------------------------------
 
-    public Task<string> UploadPhotoAsync(long? peerId, VkImage image, CancellationToken ct) => peerId is long peer
-        ? UploadPhotoCoreAsync("photos.getMessagesUploadServer",
-            new Dictionary<string, string> { ["peer_id"] = peer.ToString() }, "photos.saveMessagesPhoto", image, ct)
-        : UploadPhotoCoreAsync("photos.getWallUploadServer", new Dictionary<string, string>(), "photos.saveWallPhoto", image, ct);
+    public Task<string> UploadPhotoAsync(
+        long? peerId,
+        long? communityId,
+        VkUploadSource source,
+        CancellationToken ct)
+    {
+        if (peerId is long peer)
+        {
+            return UploadPhotoCoreAsync(
+                "photos.getMessagesUploadServer",
+                new Dictionary<string, string> { ["peer_id"] = peer.ToString() },
+                "photos.saveMessagesPhoto",
+                new Dictionary<string, string>(),
+                source,
+                ct);
+        }
+
+        var groupParameters = communityId is long group
+            ? new Dictionary<string, string> { ["group_id"] = group.ToString() }
+            : new Dictionary<string, string>();
+        return UploadPhotoCoreAsync(
+            "photos.getWallUploadServer",
+            new Dictionary<string, string>(groupParameters),
+            "photos.saveWallPhoto",
+            groupParameters,
+            source,
+            ct);
+    }
 
     private async Task<string> UploadPhotoCoreAsync(
-        string getServer, Dictionary<string, string> serverParams, string saveMethod, VkImage image, CancellationToken ct)
+        string getServer,
+        Dictionary<string, string> serverParams,
+        string saveMethod,
+        Dictionary<string, string> saveParams,
+        VkUploadSource source,
+        CancellationToken ct)
     {
-        var uploaded = await WithRetryAsync(async () =>
+        var uploaded = await VkUploadRetry.ExecuteAsync(async () =>
         {
             var uploadUrl = await GetUploadUrlAsync(getServer, serverParams, ct).ConfigureAwait(false);
-            return await api.UploadPhotoAsync(uploadUrl, image, ct).ConfigureAwait(false);
+            return await api.UploadPhotoAsync(uploadUrl, source, ct).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
 
-        using var saved = await api.CallAsync(saveMethod, new Dictionary<string, string>
+        var parameters = new Dictionary<string, string>(saveParams)
         {
             ["photo"] = uploaded.Photo,
             ["server"] = uploaded.Server.ToString(),
             ["hash"] = uploaded.Hash,
-        }, ct).ConfigureAwait(false);
+        };
+        using var saved = await api.CallAsync(saveMethod, parameters, ct).ConfigureAwait(false);
 
         var response = VkWebApi.GetResponseOrThrow(saved, saveMethod);
         if (response.ValueKind == JsonValueKind.Array)
@@ -47,7 +75,11 @@ internal sealed class VkMediaUploader(VkWebApi api)
     // --- Документы (файлы, GIF, аудиосообщения) -------------------------------
 
     public async Task<string> UploadDocumentAsync(
-        long? peerId, byte[] bytes, string fileName, VkDocType type, CancellationToken ct)
+        long? peerId,
+        long? communityId,
+        VkUploadSource source,
+        VkDocType type,
+        CancellationToken ct)
     {
         var typeStr = type switch
         {
@@ -66,14 +98,16 @@ internal sealed class VkMediaUploader(VkWebApi api)
         else
         {
             getServer = "docs.getWallUploadServer";
-            serverParams = new Dictionary<string, string>();
+            serverParams = communityId is long group
+                ? new Dictionary<string, string> { ["group_id"] = group.ToString() }
+                : new Dictionary<string, string>();
         }
 
         // Сервер документов принимает файл в поле «file» и возвращает {file: "<token>"}.
-        var fileToken = await WithRetryAsync(async () =>
+        var fileToken = await VkUploadRetry.ExecuteAsync(async () =>
         {
             var uploadUrl = await GetUploadUrlAsync(getServer, serverParams, ct).ConfigureAwait(false);
-            using var up = await api.UploadFileAsync(uploadUrl, "file", bytes, fileName, ContentTypeFor(fileName), ct).ConfigureAwait(false);
+            using var up = await api.UploadFileAsync(uploadUrl, "file", source, ct).ConfigureAwait(false);
             var token = up.RootElement.TryGetProperty("file", out var f) ? f.GetString() ?? "" : "";
             if (string.IsNullOrEmpty(token))
                 throw new VkClientException($"Сервер документов не принял файл: {up.RootElement.GetRawText()}");
@@ -81,7 +115,7 @@ internal sealed class VkMediaUploader(VkWebApi api)
         }, ct).ConfigureAwait(false);
 
         using var saved = await api.CallAsync("docs.save",
-            new Dictionary<string, string> { ["file"] = fileToken, ["title"] = fileName }, ct).ConfigureAwait(false);
+            new Dictionary<string, string> { ["file"] = fileToken, ["title"] = source.FileName }, ct).ConfigureAwait(false);
 
         // Ответ: {type: "doc"|"audio_message"|…, <type>: {id, owner_id, access_key?}}.
         var response = VkWebApi.GetResponseOrThrow(saved, "docs.save");
@@ -94,14 +128,20 @@ internal sealed class VkMediaUploader(VkWebApi api)
     // --- Видео (в т.ч. клипы) -------------------------------------------------
 
     public async Task<string> UploadVideoAsync(
-        byte[] bytes, string fileName, string? name, string? description, CancellationToken ct)
+        long? communityId,
+        VkUploadSource source,
+        string? name,
+        string? description,
+        CancellationToken ct)
     {
         var saveParams = new Dictionary<string, string>
         {
-            ["name"] = string.IsNullOrEmpty(name) ? fileName : name,
+            ["name"] = string.IsNullOrEmpty(name) ? source.FileName : name,
             ["is_private"] = "0",
             ["wallpost"] = "0",
         };
+        if (communityId is long group)
+            saveParams["group_id"] = group.ToString();
         if (!string.IsNullOrEmpty(description))
             saveParams["description"] = description;
 
@@ -122,9 +162,9 @@ internal sealed class VkMediaUploader(VkWebApi api)
 
         // Шаг 2: POST файла в поле «video_file» на CDN (повтор на том же URL, чтобы не плодить пустые видео).
         // Видео обрабатывается асинхронно, но ссылка-вложение уже валидна.
-        await WithRetryAsync(async () =>
+        await VkUploadRetry.ExecuteAsync(async () =>
         {
-            using var up = await api.UploadFileAsync(uploadUrl, "video_file", bytes, fileName, "video/mp4", ct).ConfigureAwait(false);
+            using var up = await api.UploadFileAsync(uploadUrl, "video_file", source, ct).ConfigureAwait(false);
             if (up.RootElement.TryGetProperty("error", out _))
                 throw new VkClientException($"CDN отклонил видео: {up.RootElement.GetRawText()}");
             return true;
@@ -134,22 +174,6 @@ internal sealed class VkMediaUploader(VkWebApi api)
     }
 
     // --- Общее ----------------------------------------------------------------
-
-    private static async Task<T> WithRetryAsync<T>(Func<Task<T>> action, CancellationToken ct, int attempts = UploadAttempts)
-    {
-        for (var i = 1; ; i++)
-        {
-            try
-            {
-                return await action().ConfigureAwait(false);
-            }
-            catch (VkClientException) when (i < attempts)
-            {
-                // Свежий upload-сервер на следующей попытке (часть серверов pu.vk.ru отдаёт 3xx/405).
-                await Task.Delay(TimeSpan.FromMilliseconds(250 * i), ct).ConfigureAwait(false);
-            }
-        }
-    }
 
     private async Task<string> GetUploadUrlAsync(string method, Dictionary<string, string> parameters, CancellationToken ct)
     {
@@ -169,18 +193,4 @@ internal sealed class VkMediaUploader(VkWebApi api)
         return string.IsNullOrEmpty(accessKey) ? $"{prefix}{ownerId}_{id}" : $"{prefix}{ownerId}_{id}_{accessKey}";
     }
 
-    private static string ContentTypeFor(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
-    {
-        ".png" => "image/png",
-        ".jpg" or ".jpeg" => "image/jpeg",
-        ".gif" => "image/gif",
-        ".webp" => "image/webp",
-        ".mp4" => "video/mp4",
-        ".mp3" => "audio/mpeg",
-        ".ogg" => "audio/ogg",
-        ".pdf" => "application/pdf",
-        ".zip" => "application/zip",
-        ".txt" => "text/plain",
-        _ => "application/octet-stream",
-    };
 }

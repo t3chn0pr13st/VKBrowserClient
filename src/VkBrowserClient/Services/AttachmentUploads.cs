@@ -10,14 +10,18 @@ internal static class AttachmentUploads
 
     /// <summary>Загрузить все вложения и вернуть их строки (photo…/doc…/video…).</summary>
     public static async Task<List<string>> ResolveAllAsync(
-        VkWebApi api, IReadOnlyList<VkAttachmentSource> attachments, long? peerId, CancellationToken ct)
+        VkWebApi api,
+        IReadOnlyList<VkAttachmentSource> attachments,
+        long? peerId,
+        long? communityId,
+        CancellationToken ct)
     {
         var refs = new List<string>(attachments.Count);
         if (attachments.Count > 0)
         {
             var uploader = new VkMediaUploader(api);
             foreach (var a in attachments)
-                refs.Add(await a.ResolveAsync(uploader, peerId, ct).ConfigureAwait(false));
+                refs.Add(await a.ResolveAsync(uploader, peerId, communityId, ct).ConfigureAwait(false));
         }
         return refs;
     }

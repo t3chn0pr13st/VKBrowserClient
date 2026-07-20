@@ -16,6 +16,8 @@ using VkBrowserClient;
 //   history <peer_id> [count]             — история сообщений диалога
 //   send <peer_id> <текст> [медиа]        — отправить сообщение (--photo/--doc/--video)
 //   post <текст> [медиа]                  — опубликовать запись (--photo/--doc/--video)
+//   postgroup <group_id> <текст> [медиа]  — опубликовать запись от имени сообщества
+//   clipgroup <group_id> <видео> [опис.]  — опубликовать клип сообщества
 //   export <файл>                         — выгрузить выбранную сессию в файл
 //   import <файл>                         — загрузить сессию из файла в выбранную
 //   sessions                              — список сохранённых сессий
@@ -115,6 +117,18 @@ try
             Console.WriteLine($"Запись опубликована: {post.Url}");
             break;
 
+        case "postgroup":
+            RequireArg(positionals, 0, "postgroup <group_id> <текст> [--photo|--doc|--video путь]");
+            var postGroupId = long.Parse(positionals[0]);
+            var groupPostText = string.Join(' ', positionals.Skip(1));
+            var groupPost = await client.Wall.PostToCommunityAsync(
+                postGroupId,
+                groupPostText.Length > 0 ? groupPostText : null,
+                attachments,
+                ct);
+            Console.WriteLine($"Запись сообщества опубликована: {groupPost.Url}");
+            break;
+
         case "clip":
             RequireArg(positionals, 0, "clip <путь-к-видео> [описание]");
             var clipDesc = positionals.Count > 1 ? string.Join(' ', positionals.Skip(1)) : null;
@@ -122,6 +136,18 @@ try
             var clip = await client.Clips.PublishFromFileAsync(
                 positionals[0], new VkClipPublishOptions { Description = clipDesc }, ct);
             Console.WriteLine($"Клип опубликован: {clip.Url}");
+            break;
+
+        case "clipgroup":
+            RequireArg(positionals, 1, "clipgroup <group_id> <путь-к-видео> [описание]");
+            var clipGroupId = long.Parse(positionals[0]);
+            var groupClipDesc = positionals.Count > 2 ? string.Join(' ', positionals.Skip(2)) : null;
+            Console.WriteLine("Публикую клип сообщества (создание → потоковая загрузка → кодирование → публикация)…");
+            var groupClip = await client.Clips.PublishFromFileAsync(
+                positionals[1],
+                new VkClipPublishOptions { GroupId = clipGroupId, Description = groupClipDesc },
+                ct);
+            Console.WriteLine($"Клип сообщества опубликован: {groupClip.Url}");
             break;
 
         case "editclip":
@@ -141,9 +167,9 @@ try
 }
 catch (VkAuthenticationException ex) { return Fail("Вход не завершён", ex, 2); }
 catch (VkSessionExpiredException ex) { return Fail("Сессия недействительна (выберите новый вход)", ex, 3); }
-catch (VkApiException ex)            { return Fail("Ошибка метода VK", ex, 4); }
-catch (VkClientException ex)         { return Fail("Ошибка клиента VK", ex, 4); }
-catch (OperationCanceledException)   { Console.Error.WriteLine("Отменено."); return 130; }
+catch (VkApiException ex) { return Fail("Ошибка метода VK", ex, 4); }
+catch (VkClientException ex) { return Fail("Ошибка клиента VK", ex, 4); }
+catch (OperationCanceledException) { Console.Error.WriteLine("Отменено."); return 130; }
 
 // --- команды -----------------------------------------------------------------
 
@@ -311,7 +337,9 @@ static void PrintHelp()
           history <peer_id> [count]               история сообщений диалога
           send <peer_id> <текст> [медиа]          отправить сообщение (с медиа)
           post <текст> [медиа]                    опубликовать запись (с медиа)
+          postgroup <group_id> <текст> [медиа]    запись от имени сообщества
           clip <путь-к-видео> [описание]          опубликовать клип
+          clipgroup <group_id> <видео> [опис.]    клип от имени сообщества
           editclip <owner_id> <video_id> <опис.> изменить описание клипа
           export <файл>                           выгрузить выбранную сессию в файл
           import <файл>                           загрузить сессию из файла в выбранную

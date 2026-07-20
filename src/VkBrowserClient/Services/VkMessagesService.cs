@@ -82,7 +82,12 @@ public sealed class VkMessagesService
             throw new ArgumentOutOfRangeException(nameof(randomId), "random_id должен быть положительным.");
 
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
-        var refs = await AttachmentUploads.ResolveAllAsync(api, attachments, peerId, cancellationToken).ConfigureAwait(false);
+        var refs = await AttachmentUploads.ResolveAllAsync(
+            api,
+            attachments,
+            peerId,
+            communityId: null,
+            cancellationToken).ConfigureAwait(false);
 
         var parameters = new Dictionary<string, string>
         {
