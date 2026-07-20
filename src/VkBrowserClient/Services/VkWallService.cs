@@ -186,6 +186,8 @@ public sealed class VkWallService
         }
         if (options.PublishAt is { } publishAt)
             parameters["publish_date"] = publishAt.ToUnixTimeSeconds().ToString();
+        if (!string.IsNullOrWhiteSpace(options.IdempotencyKey))
+            parameters["guid"] = options.IdempotencyKey;
 
         using var doc = await api.CallAsync("wall.post", parameters, cancellationToken).ConfigureAwait(false);
         await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);

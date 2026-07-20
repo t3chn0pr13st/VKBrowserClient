@@ -17,6 +17,12 @@ public sealed class VkWallPostOptions
     /// <summary>Время отложенной публикации. null означает публикацию сейчас.</summary>
     public DateTimeOffset? PublishAt { get; set; }
 
+    /// <summary>
+    /// Стабильный ключ идемпотентности для wall.post. Повтор с тем же ключом не должен
+    /// создавать вторую запись после неоднозначной сетевой ошибки.
+    /// </summary>
+    public string? IdempotencyKey { get; set; }
+
     internal long? ValidateAndGetCommunityId()
     {
         if (CommunityId is <= 0)
@@ -25,6 +31,8 @@ public sealed class VkWallPostOptions
             throw new ArgumentException("FriendsOnly нельзя использовать для стены сообщества.", nameof(FriendsOnly));
         if (PublishAt is { } publishAt && publishAt <= DateTimeOffset.UtcNow)
             throw new ArgumentOutOfRangeException(nameof(PublishAt), "Время отложенной публикации должно быть в будущем.");
+        if (IdempotencyKey is { Length: > 64 })
+            throw new ArgumentOutOfRangeException(nameof(IdempotencyKey), "IdempotencyKey должен быть не длиннее 64 символов.");
         return CommunityId;
     }
 }

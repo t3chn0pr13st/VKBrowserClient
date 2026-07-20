@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 
 namespace VkBrowserClient.Tests;
 
@@ -44,7 +45,12 @@ public sealed class PublicationApiTests
         };
 
         await using var client = Client(api, uploads);
-        var result = await client.Wall.PostToCommunityAsync(123, "Caption", attachments);
+        var result = await client.Wall.PostAsync("Caption", attachments, new VkWallPostOptions
+        {
+            CommunityId = 123,
+            FromCommunity = true,
+            IdempotencyKey = "job-0123456789"
+        });
 
         Assert.Equal(-123, result.OwnerId);
         Assert.Equal(77, result.PostId);
@@ -63,6 +69,7 @@ public sealed class PublicationApiTests
         Assert.Equal("1", wall["from_group"]);
         Assert.Equal("Caption", wall["message"]);
         Assert.Equal("photo-123_10,video-123_20,photo-123_11", wall["attachments"]);
+        Assert.Equal("job-0123456789", wall["guid"]);
     }
 
     [Fact]
@@ -126,15 +133,26 @@ public sealed class PublicationApiTests
         var source = Source("reel.mp4", "video/mp4", 64_000, () => uploadOpens++);
 
         await using var client = Client(api, uploads);
-        var clip = await client.Clips.PublishAsync(source, new VkClipPublishOptions
+        var options = new VkClipPublishOptions
         {
             GroupId = 123,
             Description = "original",
             PostToWall = false
-        });
+        };
+        var created = await client.Clips.CreateUploadSessionAsync(source, options);
+        var restoredCreated = JsonSerializer.Deserialize<VkClipUploadSession>(
+            JsonSerializer.Serialize(created))!;
+        var uploaded = await client.Clips.UploadAsync(restoredCreated, source);
+        var restoredUploaded = JsonSerializer.Deserialize<VkClipUploadSession>(
+            JsonSerializer.Serialize(uploaded))!;
+        var clip = await client.Clips.CompletePublishAsync(restoredUploaded, options);
         var updated = await client.Clips.EditDescriptionAsync(clip, "updated");
         var processing = await client.Clips.GetProcessingStatusAsync(clip);
 
+        Assert.Equal(VkClipUploadStage.Created, created.Stage);
+        Assert.Equal(VkClipUploadStage.Uploaded, uploaded.Stage);
+        Assert.Equal("clip-hash", uploaded.VideoHash);
+        Assert.Equal(created.Reference, uploaded.Reference);
         Assert.Equal("video-123_42", clip.Reference);
         Assert.Equal("https://vk.ru/clip-123_42", clip.Url);
         Assert.Equal("updated", updated);
@@ -143,6 +161,7 @@ public sealed class PublicationApiTests
         var create = calls.Single(x => x.Method == "shortVideo.create").Form;
         Assert.Equal("64000", create["file_size"]);
         Assert.Equal("123", create["group_id"]);
+        Assert.Single(calls, x => x.Method == "shortVideo.create");
         var edits = calls.Where(x => x.Method == "shortVideo.edit").ToList();
         Assert.Equal("original", edits[0].Form["description"]);
         Assert.Equal("updated", edits[1].Form["description"]);

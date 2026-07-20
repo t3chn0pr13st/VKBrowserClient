@@ -136,6 +136,10 @@ shortVideo.edit(video_id, owner_id, description, privacy_view, privacy_comment) 
 shortVideo.publish(video_id, owner_id, wallpost, publish_date=0, license_agree=1, ref)          # публикация
 ```
 
+Публичный API делит этот флоу на `CreateUploadSessionAsync`, `UploadAsync` и
+`CompletePublishAsync`. `VkClipUploadSession` можно сохранить между рестартами; её
+`upload_url` считается секретом. Атомарный `PublishAsync` оставлен как совместимая обёртка.
+
 Крупные клипы веб грузит на `upload.do` чанками (byte-range, 4 канала). Библиотека отправляет
 один потоковый multipart POST полем `video_file`: файл не буферизуется целиком в памяти,
 а `VkUploadSource` повторно открывает поток для сетевого ретрая.
@@ -149,7 +153,7 @@ shortVideo.publish(video_id, owner_id, wallpost, publish_date=0, license_agree=1
 photos.getWallUploadServer(group_id) → photos.saveWallPhoto(group_id, ...)
 docs.getWallUploadServer(group_id)   → docs.save(...)
 video.save(group_id, ...)            → upload
-wall.post(owner_id=-group_id, from_group=1, attachments=...)
+wall.post(owner_id=-group_id, from_group=1, attachments=..., guid=<stable-idempotency-key>)
 ```
 
 Порядок ссылок в `attachments` совпадает с порядком `VkAttachmentSource`. При изменении

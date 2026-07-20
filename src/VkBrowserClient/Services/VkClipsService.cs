@@ -43,14 +43,26 @@ public sealed class VkClipsService
         VkClipPublishOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(video);
-        if (video.Length < 16384)
-            throw new ArgumentException("Клип слишком мал: VK требует минимум 16 КБ.", nameof(video));
+        options ??= new VkClipPublishOptions();
+        var session = await CreateUploadSessionAsync(video, options, cancellationToken).ConfigureAwait(false);
+        session = await UploadAsync(session, video, cancellationToken).ConfigureAwait(false);
+        return await CompletePublishAsync(session, options, cancellationToken).ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// Зарезервировать неизменяемый provider id и получить подписанный URL загрузки.
+    /// Сохраните возвращённую сессию до начала загрузки: повторное продолжение должно
+    /// использовать её, а не снова вызывать shortVideo.create.
+    /// </summary>
+    public async Task<VkClipUploadSession> CreateUploadSessionAsync(
+        VkUploadSource video,
+        VkClipPublishOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateVideo(video);
         options ??= new VkClipPublishOptions();
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
 
-        // 1) shortVideo.create — резервирует клип и отдаёт upload_url.
         long ownerId, videoId;
         string uploadUrl;
         using (var doc = await api.CallAsync("shortVideo.create", new Dictionary<string, string>
@@ -63,28 +75,71 @@ public sealed class VkClipsService
             ownerId = r.TryGetProperty("owner_id", out var o) && o.TryGetInt64(out var ov) ? ov : 0;
             videoId = r.TryGetProperty("video_id", out var i) && i.TryGetInt64(out var iv) ? iv : 0;
             uploadUrl = r.TryGetProperty("upload_url", out var u) ? u.GetString() ?? "" : "";
-            if (string.IsNullOrEmpty(uploadUrl) || videoId == 0)
-                throw new VkClientException("shortVideo.create не вернул upload_url/video_id.");
+            if (string.IsNullOrEmpty(uploadUrl) || ownerId == 0 || videoId == 0)
+                throw new VkClientException("shortVideo.create не вернул upload_url/owner_id/video_id.");
         }
 
-        // 2) Загрузка файла на CDN (поле video_file), как у обычного видео.
+        await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+        return new VkClipUploadSession
+        {
+            OwnerId = ownerId,
+            VideoId = videoId,
+            UploadUrl = uploadUrl,
+            Stage = VkClipUploadStage.Created
+        };
+    }
+
+    /// <summary>
+    /// Загрузить файл в ранее зарезервированный Clip. Временные ошибки повторяют только
+    /// загрузку в тот же URL и никогда не создают новый provider id.
+    /// </summary>
+    public async Task<VkClipUploadSession> UploadAsync(
+        VkClipUploadSession session,
+        VkUploadSource video,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateSession(session, VkClipUploadStage.Created);
+        ValidateVideo(video);
+        var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
         var videoHash = await VkUploadRetry.ExecuteAsync(async () =>
         {
-            using var up = await api.UploadFileAsync(uploadUrl, "video_file", video, cancellationToken)
+            using var up = await api.UploadFileAsync(session.UploadUrl, "video_file", video, cancellationToken)
                 .ConfigureAwait(false);
             if (up.RootElement.TryGetProperty("error", out _))
                 throw new VkClientException($"CDN отклонил клип: {up.RootElement.GetRawText()}");
             return up.RootElement.TryGetProperty("video_hash", out var vh) ? vh.GetString() ?? "" : "";
         }, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(videoHash))
+            throw new VkClientException("CDN принял запрос, но не вернул video_hash.");
 
-        // 3) Дождаться завершения кодирования (best-effort; без этого публикация может не пройти).
-        await WaitEncodedAsync(api, videoId, ownerId, videoHash, cancellationToken).ConfigureAwait(false);
+        await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+        return session with { VideoHash = videoHash, Stage = VkClipUploadStage.Uploaded };
+    }
 
-        // 4) Метаданные: описание, приватность, дуэты.
+    /// <summary>
+    /// Дождаться обработки, применить метаданные и опубликовать ранее загруженный Clip.
+    /// Повтор использует тот же provider id и не загружает медиа заново.
+    /// </summary>
+    public async Task<VkClipResult> CompletePublishAsync(
+        VkClipUploadSession session,
+        VkClipPublishOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateSession(session, VkClipUploadStage.Uploaded);
+        options ??= new VkClipPublishOptions();
+        var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
+
+        await WaitEncodedAsync(
+            api,
+            session.VideoId,
+            session.OwnerId,
+            session.VideoHash!,
+            cancellationToken).ConfigureAwait(false);
+
         var editParams = new Dictionary<string, string>
         {
-            ["video_id"] = videoId.ToString(),
-            ["owner_id"] = ownerId.ToString(),
+            ["video_id"] = session.VideoId.ToString(),
+            ["owner_id"] = session.OwnerId.ToString(),
             ["privacy_view"] = VkClipPublishOptions.Privacy(options.View),
             ["privacy_comment"] = VkClipPublishOptions.Privacy(options.Comment),
             ["can_make_duet"] = options.AllowDuets ? "1" : "0",
@@ -93,11 +148,10 @@ public sealed class VkClipsService
             editParams["description"] = options.Description;
         using (await api.CallAsync("shortVideo.edit", editParams, cancellationToken).ConfigureAwait(false)) { }
 
-        // 5) Публикация (в т.ч. на стену; при необходимости — отложенная).
         using (var pub = await api.CallAsync("shortVideo.publish", new Dictionary<string, string>
         {
-            ["video_id"] = videoId.ToString(),
-            ["owner_id"] = ownerId.ToString(),
+            ["video_id"] = session.VideoId.ToString(),
+            ["owner_id"] = session.OwnerId.ToString(),
             ["wallpost"] = options.PostToWall ? "1" : "0",
             ["publish_date"] = (options.PublishAt?.ToUnixTimeSeconds() ?? 0).ToString(),
             ["license_agree"] = "1",
@@ -108,7 +162,7 @@ public sealed class VkClipsService
         }
 
         await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
-        return new VkClipResult { OwnerId = ownerId, VideoId = videoId };
+        return new VkClipResult { OwnerId = session.OwnerId, VideoId = session.VideoId };
     }
 
     /// <summary>
@@ -222,5 +276,24 @@ public sealed class VkClipsService
 
             await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
         }
+    }
+
+    private static void ValidateVideo(VkUploadSource video)
+    {
+        ArgumentNullException.ThrowIfNull(video);
+        if (video.Length < 16384)
+            throw new ArgumentException("Клип слишком мал: VK требует минимум 16 КБ.", nameof(video));
+    }
+
+    private static void ValidateSession(VkClipUploadSession session, VkClipUploadStage expectedStage)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (session.OwnerId == 0 || session.VideoId <= 0 || string.IsNullOrWhiteSpace(session.UploadUrl))
+            throw new ArgumentException("Сессия загрузки Клипа неполна.", nameof(session));
+        if (session.Stage != expectedStage)
+            throw new InvalidOperationException(
+                $"Ожидался этап Клипа {expectedStage}, получен {session.Stage}.");
+        if (expectedStage == VkClipUploadStage.Uploaded && string.IsNullOrWhiteSpace(session.VideoHash))
+            throw new ArgumentException("Загруженная сессия Клипа не содержит video_hash.", nameof(session));
     }
 }

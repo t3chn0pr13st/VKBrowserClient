@@ -183,6 +183,21 @@ await client.Clips.PublishAsync(source, new VkClipPublishOptions
 });
 ```
 
+Для долговечного фонового задания разделите операцию на этапы и сохраняйте сессию
+между ними (она сериализуется обычным `System.Text.Json`):
+
+```csharp
+var session = await client.Clips.CreateUploadSessionAsync(source, options);
+SaveEncrypted(JsonSerializer.Serialize(session)); // upload URL является секретом
+
+session = await client.Clips.UploadAsync(session, source);
+SaveEncrypted(JsonSerializer.Serialize(session)); // provider id уже известен
+
+var clip = await client.Clips.CompletePublishAsync(session, options);
+```
+
+Повтор этапов использует зарезервированный `video{owner}_{id}`: новый Clip не создаётся.
+
 Изменить описание уже опубликованного клипа (приватность и прочее не сбрасываются):
 
 ```csharp
