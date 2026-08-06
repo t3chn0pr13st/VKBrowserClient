@@ -14,11 +14,11 @@
 
     <!-- NuGet-пакет -->
     <PackageId>VkBrowserClient</PackageId>
-    <Version>0.5.1</Version>
+    <Version>0.6.0</Version>
     <Authors>technopriest</Authors>
     <Product>VkBrowserClient</Product>
-    <Description>Неофициальный клиент vk.ru: вход через браузер (Playwright), сохранение cookie-сессии и обновление короткоживущего web-токена для фоновой работы без UI. Умеет читать диалоги и историю, отправлять сообщения с фото и публиковать записи на стене — тем же способом, что и веб-клиент.</Description>
-    <PackageTags>vk;vkontakte;messenger;messages;wall;unofficial;playwright</PackageTags>
+    <Description>Неофициальный клиент vk.ru: вход через браузер (Playwright), сохранение cookie-сессии и обновление короткоживущего web-токена для фоновой работы без UI. Поддерживает сообщения, стену, клипы и полный lifecycle прямых трансляций VK Видео.</Description>
+    <PackageTags>vk;vkontakte;messenger;messages;wall;clips;livestream;rtmp;unofficial;playwright</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/t3chn0pr13st/VKBrowserClient</RepositoryUrl>

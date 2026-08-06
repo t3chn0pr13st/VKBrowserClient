@@ -214,6 +214,101 @@ if (status.State == VkVideoProcessingState.Processing)
 (здесь потоковый одиночный POST); выбор конкретного кадра
 обложки не реализован (берётся кадр по умолчанию).
 
+## Прямые трансляции VK Видео
+
+`client.Live` закрывает полный provider lifecycle типизированными методами, чтобы приложение
+не вызывало `video.*` вручную. Контракт соответствует официальной
+[VK API schema](https://github.com/VKCOM/vk-api-schema/blob/master/video/methods.json).
+
+Подготовить эфир без записи на стене и сохранить provider anchor вместе с секретными ingest-полями:
+
+```csharp
+var live = await client.Live.StartStreamingAsync(new VkLiveStartOptions
+{
+    Name = "Утренняя практика",
+    Description = "Описание эфира",
+    GroupId = 12345,                  // null — личный профиль
+    CategoryId = 7,                  // из GetCategoriesAsync()
+    ViewPrivacy = VkLivePrivacy.All,
+    CommentPrivacy = VkLivePrivacy.All,
+    DisableComments = false,
+    Publish = false,                 // предварительная подготовка
+    PostToWall = false,
+});
+
+SaveEncrypted(new
+{
+    live.OwnerId,
+    live.VideoId,
+    live.AccessKey,
+    live.Ingest.Url,
+    live.Ingest.Key,
+});
+```
+
+`AccessKey`, `Ingest.Url`, `Ingest.Key`, `OkmpUrl` и `WebRtcUrl` могут давать доступ к
+непубличному объекту или входному потоку. Храните их как секреты и не включайте в логи,
+exception telemetry и operator-facing историю. `Reference` и `Url` специально не содержат
+`AccessKey`.
+
+У `video.startStreaming` нет idempotency key. При timeout первого create-запроса без ответа
+нельзя слепо повторять его: отметьте исход как неопределённый и проведите reconciliation.
+Если `video_id` уже сохранён, его можно явно передать как `VkLiveStartOptions.VideoId`, чтобы
+адресовать тот же provider object.
+
+Категории, изменение, состояние, остановка и удаление:
+
+```csharp
+var categories = await client.Live.GetCategoriesAsync(cancellationToken);
+var reference = live.ToReference();
+
+await client.Live.UpdateAsync(reference, new VkLiveUpdateOptions
+{
+    Name = "Новое название",
+    Description = "Новое описание",
+    ViewPrivacy = VkLivePrivacy.OnlyMe,
+});
+
+var status = await client.Live.GetStatusAsync(reference, cancellationToken);
+// Upcoming / Live / Processing / Ready / NotFound / Unknown
+
+var stopped = await client.Live.StopStreamingAsync(reference, cancellationToken);
+Console.WriteLine($"Уникальных зрителей: {stopped.UniqueViewers}");
+
+await client.Live.DeleteAsync(reference, cancellationToken); // отдельное подтверждаемое действие приложения
+```
+
+Для непубличного объекта всегда используйте `VkLiveReference` с сохранённым `AccessKey`:
+`GetStatusAsync` передаст VK полную API-ссылку, но безопасные отображаемые ссылки ключа не содержат.
+
+### Обложка прямого эфира
+
+Удобный полный вызов:
+
+```csharp
+await client.Live.SetThumbnailAsync(
+    live.ToReference(),
+    VkUploadSource.FromFile("cover.jpg", "image/jpeg"),
+    cancellationToken);
+```
+
+Для durable worker разделите его на сохраняемые этапы. Новый provider id при retry не создаётся,
+а повторный upload заново открывает поток того же `VkUploadSource`:
+
+```csharp
+var uploadSession = await client.Live.CreateThumbnailUploadSessionAsync(
+    live.OwnerId, live.VideoId, cancellationToken);
+SaveEncrypted(uploadSession); // UploadUrl подписан и является секретом
+
+var uploaded = await client.Live.UploadThumbnailAsync(uploadSession, cover, cancellationToken);
+SaveEncrypted(uploaded);      // ThumbJson предназначен только для saveUploadedThumb
+
+var thumbnail = await client.Live.SaveThumbnailAsync(uploaded, cancellationToken);
+```
+
+Источник обложки должен иметь непустое содержимое и MIME `image/*`. Нормализацию размера,
+кроп и проверку magic bytes выполняйте до вызова wrapper в доменном приложении.
+
 ## Обработка ошибок
 
 | Исключение | Когда | Что делать |

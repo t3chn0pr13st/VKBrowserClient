@@ -79,6 +79,8 @@ count=10&extended=1&fields=first_name,last_name,name&v=5.282&access_token=vk1.a.
 | Публикация записи | `wall.post` |
 | Загрузка фото | `photos.get{Messages,Wall}UploadServer` → upload → `photos.save{Messages,Wall}Photo` |
 | Загрузка документов | `docs.get{Messages,Wall}UploadServer` → upload → `docs.save` |
+| Прямой эфир | `video.startStreaming` → `video.get` → `video.stopStreaming` |
+| Обложка эфира | `video.getThumbUploadUrl` → signed upload → `video.saveUploadedThumb` |
 | Загрузка видео | `video.save` → upload (`ovu.mycdn.me`) |
 | Публикация клипа | `shortVideo.create` → upload → `encodeProgress` → `edit` → `publish` |
 
