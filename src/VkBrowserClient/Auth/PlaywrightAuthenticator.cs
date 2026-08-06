@@ -185,9 +185,12 @@ public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator
         // Если id не удалось получить из токена — берём из window.vk.id.
         if (session.UserId == 0)
         {
-            try { session.UserId = await page.EvaluateAsync<long>(
+            try
+            {
+                session.UserId = await page.EvaluateAsync<long>(
                 "() => { try { return (window['vk'] && window['vk']['id']) || 0; } catch (e) { return 0; } }")
-                .ConfigureAwait(false); }
+                .ConfigureAwait(false);
+            }
             catch { /* останется 0, заполнится при первом web_token */ }
         }
 

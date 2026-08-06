@@ -110,7 +110,8 @@ internal sealed class VkMediaUploader(VkWebApi api)
             using var up = await api.UploadFileAsync(uploadUrl, "file", source, ct).ConfigureAwait(false);
             var token = up.RootElement.TryGetProperty("file", out var f) ? f.GetString() ?? "" : "";
             if (string.IsNullOrEmpty(token))
-                throw new VkClientException($"Сервер документов не принял файл: {up.RootElement.GetRawText()}");
+                throw new VkClientException(
+                    $"Сервер документов не принял файл: {VkSafeErrorDetails.Describe(up.RootElement)}");
             return token;
         }, ct).ConfigureAwait(false);
 
@@ -166,7 +167,8 @@ internal sealed class VkMediaUploader(VkWebApi api)
         {
             using var up = await api.UploadFileAsync(uploadUrl, "video_file", source, ct).ConfigureAwait(false);
             if (up.RootElement.TryGetProperty("error", out _))
-                throw new VkClientException($"CDN отклонил видео: {up.RootElement.GetRawText()}");
+                throw new VkClientException(
+                    $"CDN отклонил видео: {VkSafeErrorDetails.Describe(up.RootElement)}");
             return true;
         }, ct).ConfigureAwait(false);
 

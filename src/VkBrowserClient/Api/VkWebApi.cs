@@ -159,10 +159,14 @@ public sealed class VkWebApi : IDisposable
 
         if (!response.IsSuccessStatusCode)
             throw new VkClientException(
-                $"Сервер загрузки вернул HTTP {(int)response.StatusCode}: {Trim(body)}");
+                $"Сервер загрузки вернул HTTP {(int)response.StatusCode}: {VkSafeErrorDetails.Describe(body)}");
 
         try { return JsonDocument.Parse(body); }
-        catch (JsonException ex) { throw new VkClientException($"Сервер загрузки вернул не-JSON ответ: {Trim(body)}", ex); }
+        catch (JsonException)
+        {
+            throw new VkClientException(
+                $"Сервер загрузки вернул не-JSON ответ: {VkSafeErrorDetails.Describe(body)}");
+        }
     }
 
     /// <summary>Загрузить изображение на сервер фото VK (URL из photos.get*UploadServer). Поле формы — «photo».</summary>
@@ -197,9 +201,8 @@ public sealed class VkWebApi : IDisposable
     {
         if (!doc.RootElement.TryGetProperty("response", out var response))
         {
-            var raw = doc.RootElement.GetRawText();
             throw new VkClientException(
-                $"Ответ '{method}' не содержит поля 'response': {(raw.Length > 300 ? raw[..300] + "…" : raw)}");
+                $"Ответ '{method}' не содержит поля 'response': {VkSafeErrorDetails.Describe(doc.RootElement)}");
         }
         return response;
     }
@@ -243,10 +246,10 @@ public sealed class VkWebApi : IDisposable
         {
             doc = JsonDocument.Parse(body);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
             throw new VkSessionExpiredException(
-                "Не удалось разобрать ответ web_token (вероятно, вернулась HTML-страница входа). Нужен повторный вход.", ex);
+                "Не удалось разобрать ответ web_token (вероятно, вернулась HTML-страница входа). Нужен повторный вход.");
         }
 
         using (doc)
@@ -255,9 +258,9 @@ public sealed class VkWebApi : IDisposable
             var type = root.TryGetProperty("type", out var t) ? t.GetString() : null;
             if (type != "okay" || !root.TryGetProperty("data", out var data))
             {
-                var detail = root.TryGetProperty("error", out var err) ? err.ToString() : body;
                 throw new VkSessionExpiredException(
-                    $"login.vk.ru не выдал web-токен (type='{type}'). Сессия недействительна, нужен повторный вход. Ответ: {Trim(detail)}");
+                    "login.vk.ru не выдал web-токен. Сессия недействительна, нужен повторный вход. " +
+                    VkSafeErrorDetails.Describe(root));
             }
 
             var accessToken = data.TryGetProperty("access_token", out var at) ? at.GetString() : null;
@@ -305,9 +308,11 @@ public sealed class VkWebApi : IDisposable
         {
             return JsonDocument.Parse(body);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            throw new VkClientException($"Метод '{method}' вернул не-JSON ответ (HTTP {(int)response.StatusCode}): {Trim(body)}", ex);
+            throw new VkClientException(
+                $"Метод '{method}' вернул не-JSON ответ (HTTP {(int)response.StatusCode}): " +
+                VkSafeErrorDetails.Describe(body));
         }
     }
 
@@ -371,9 +376,6 @@ public sealed class VkWebApi : IDisposable
             }
         }
     }
-
-    private static string Trim(string? s) =>
-        string.IsNullOrEmpty(s) ? "" : (s.Length > 300 ? s[..300] + "…" : s);
 
     public void Dispose()
     {

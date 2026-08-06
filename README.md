@@ -1,5 +1,8 @@
 # VkBrowserClient
 
+[![ci](https://github.com/t3chn0pr13st/VKBrowserClient/actions/workflows/ci.yml/badge.svg)](https://github.com/t3chn0pr13st/VKBrowserClient/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Небольшой **неофициальный** клиент `vk.ru` на C# / .NET 10. Не использует публичное API ВК
 (с регистрацией приложения) — вместо этого повторяет то, что делает веб-клиент в браузере:
 вход через VK ID, сохранение cookie-сессии и обновление короткоживущего web-токена. После
@@ -20,7 +23,7 @@
 - 🔴 Прямые трансляции VK Видео — typed lifecycle `video.startStreaming` / `stopStreaming`, категории, метаданные, статус/запись, удаление и обложки.
 - 🌊 Потоковая загрузка медиа без чтения больших файлов целиком в память, с безопасным повторным открытием при ретраях.
 - 📦 Экспорт/импорт сессии (файл или base64) для переноса на сервер без браузера.
-- 🧩 Готов к подключению как NuGet-пакет (приватно, через GitHub Packages).
+- 🧩 Готов к подключению как NuGet-пакет из публичных GitHub Releases.
 
 ## Как это работает (кратко)
 
@@ -91,7 +94,7 @@ Console.WriteLine($"RTMP server: {live.Ingest.Url}");
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — вскрытый протокол VK-веба (auth, токен, методы, загрузка фото).
 - [docs/USAGE.md](docs/USAGE.md) — API и команды CLI с примерами.
 - [docs/SERVER.md](docs/SERVER.md) — перенос сессии на сервер и фоновая работа без браузера.
-- [docs/NUGET.md](docs/NUGET.md) — сборка и подключение приватного NuGet-пакета.
+- [docs/NUGET.md](docs/NUGET.md) — сборка и подключение NuGet-пакета из GitHub Releases.
 
 ## Структура
 

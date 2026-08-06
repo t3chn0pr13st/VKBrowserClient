@@ -1,7 +1,8 @@
 # NuGet-пакет
 
-Пакет `VkBrowserClient` предназначен для подключения к другим проектам. Он остаётся **приватным**:
-публикуется в GitHub Packages в рамках приватного репозитория (не в публичный nuget.org).
+Пакет `VkBrowserClient` предназначен для подключения к другим проектам. Готовые `.nupkg` и
+`.snupkg` прикладываются к [GitHub Releases](https://github.com/t3chn0pr13st/VKBrowserClient/releases),
+а в публичный `nuget.org` пакет пока не публикуется.
 
 ## Локальная сборка пакета
 
@@ -17,49 +18,20 @@ dotnet nuget add source "/путь/к/VKBrowserClient/artifacts" --name vkbc-loc
 dotnet add <ваш-проект> package VkBrowserClient
 ```
 
-## Публикация в GitHub Packages (приватно)
+## Подключение пакета из GitHub Releases
 
-Автоматически через GitHub Actions — workflow-шаблоны лежат в [`ci/`](../ci/) и активируются
-одной командой (см. [ci/README.md](../ci/README.md)); их нужно перенести в `.github/workflows/`.
-После активации публикация происходит при пуше тега версии:
+1. Скачайте `VkBrowserClient.<version>.nupkg` из нужного релиза.
+2. Положите пакет в локальный каталог, например `vendor/vk-browser-client`.
+3. Добавьте этот каталог как NuGet source и подключите пакет:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
-# Actions соберёт и запушит пакет в GitHub Packages владельца репозитория
+dotnet nuget add source "$PWD/vendor/vk-browser-client" --name vkbc-release
+dotnet add <ваш-проект> package VkBrowserClient --version <version>
 ```
 
-Публикация использует встроенный `GITHUB_TOKEN` (scope `packages: write`) — отдельные секреты не нужны.
-
-## Потребление приватного пакета в другом проекте
-
-1. Создайте Personal Access Token (classic) со scope `read:packages`.
-2. Добавьте источник NuGet (замените `OWNER` на владельца репозитория, напр. `t3chn0pr13st`):
-
-   `nuget.config` в вашем проекте:
-   ```xml
-   <?xml version="1.0" encoding="utf-8"?>
-   <configuration>
-     <packageSources>
-       <add key="github" value="https://nuget.pkg.github.com/OWNER/index.json" />
-     </packageSources>
-     <packageSourceCredentials>
-       <github>
-         <add key="Username" value="OWNER" />
-         <add key="ClearTextPassword" value="%GITHUB_PACKAGES_TOKEN%" />
-       </github>
-     </packageSourceCredentials>
-   </configuration>
-   ```
-   (токен лучше подставлять из переменной окружения, не хранить в файле).
-
-3. Подключите пакет:
-   ```bash
-   dotnet add package VkBrowserClient
-   ```
+Для воспроизводимой сборки зафиксируйте версию и SHA-256 скачанного пакета в consuming-проекте.
 
 ## После установки
 
-Библиотека тянет за собой `Microsoft.Playwright`. Для интерактивного входа нужен браузер
-Chromium — он ставится автоматически при первом запуске (или вручную:
-`pwsh <output>/playwright.ps1 install chromium`).
+Библиотека тянет за собой `Microsoft.Playwright`. Для интерактивного входа нужен Chromium;
+при необходимости установите его командой `pwsh <output>/playwright.ps1 install chromium`.

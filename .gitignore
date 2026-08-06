@@ -18,7 +18,20 @@ playwright/.cache/
 # Session files — содержат ключи от аккаунта, НИКОГДА не коммитить!
 session.json
 *.session.json
+*.portable.json
+*storage-state*.json
+*storageState*.json
+*.cookies.json
 secrets/
+.auth/
+playwright/.auth/
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
 
 # IDE
 .vs/

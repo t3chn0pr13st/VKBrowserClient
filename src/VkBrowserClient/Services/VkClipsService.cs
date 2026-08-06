@@ -106,7 +106,8 @@ public sealed class VkClipsService
             using var up = await api.UploadFileAsync(session.UploadUrl, "video_file", video, cancellationToken)
                 .ConfigureAwait(false);
             if (up.RootElement.TryGetProperty("error", out _))
-                throw new VkClientException($"CDN отклонил клип: {up.RootElement.GetRawText()}");
+                throw new VkClientException(
+                    $"CDN отклонил клип: {VkSafeErrorDetails.Describe(up.RootElement)}");
             return up.RootElement.TryGetProperty("video_hash", out var vh) ? vh.GetString() ?? "" : "";
         }, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(videoHash))

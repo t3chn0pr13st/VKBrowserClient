@@ -198,6 +198,80 @@ public sealed class PublicationApiTests
         Assert.Equal("wall-123_77", result.Reference);
     }
 
+    [Fact]
+    public async Task Clip_upload_error_does_not_echo_provider_secrets()
+    {
+        const string accessToken = "vk1.synthetic-clip-token-never-log";
+        const string signedUrl = "https://upload.test/clip?signature=synthetic-never-log";
+        const string streamKey = "synthetic-clip-stream-key-never-log";
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            return call.Method == "shortVideo.create"
+                ? Json(JsonSerializer.Serialize(new
+                {
+                    response = new { upload_url = signedUrl, owner_id = -123, video_id = 42 }
+                }))
+                : throw new InvalidOperationException($"Unexpected API method {call.Method}");
+        });
+        var uploads = new RecordingHandler((_, _) => Task.FromResult(Json($$"""
+            {
+              "error": {
+                "error_code": 17,
+                "error_msg": "{{accessToken}} {{signedUrl}} {{streamKey}}"
+              },
+              "access_token": "{{accessToken}}",
+              "upload_url": "{{signedUrl}}",
+              "stream": { "key": "{{streamKey}}" }
+            }
+            """)));
+
+        await using var client = Client(api, uploads);
+        var source = Source("clip.mp4", "video/mp4", 64_000, () => { });
+        var session = await client.Clips.CreateUploadSessionAsync(source, new VkClipPublishOptions());
+        var error = await Assert.ThrowsAsync<VkClientException>(() =>
+            client.Clips.UploadAsync(session, source));
+
+        Assert.Contains("code=17", error.Message);
+        Assert.DoesNotContain(accessToken, error.ToString());
+        Assert.DoesNotContain(signedUrl, error.ToString());
+        Assert.DoesNotContain(streamKey, error.ToString());
+    }
+
+    [Fact]
+    public async Task Document_upload_error_does_not_echo_provider_secrets()
+    {
+        const string cookie = "synthetic-document-cookie-never-log";
+        const string signedUrl = "https://upload.test/document?signature=synthetic-never-log";
+        const string providerHash = "synthetic-document-hash-never-log";
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            return call.Method == "docs.getWallUploadServer"
+                ? Json(JsonSerializer.Serialize(new { response = new { upload_url = signedUrl } }))
+                : throw new InvalidOperationException($"Unexpected API method {call.Method}");
+        });
+        var uploads = new RecordingHandler((_, _) => Task.FromResult(Json($$"""
+            {
+              "error": { "error_code": 18, "error_msg": "{{cookie}} {{signedUrl}} {{providerHash}}" },
+              "cookies": { "remixsid": "{{cookie}}" },
+              "upload_url": "{{signedUrl}}",
+              "hash": "{{providerHash}}"
+            }
+            """)));
+
+        await using var client = Client(api, uploads);
+        var attachment = VkAttachmentSource.Document(
+            Source("document.pdf", "application/pdf", 32_768, () => { }));
+        var error = await Assert.ThrowsAsync<VkClientException>(() =>
+            client.Wall.PostAsync("Caption", [attachment]));
+
+        Assert.Contains("code=18", error.Message);
+        Assert.DoesNotContain(cookie, error.ToString());
+        Assert.DoesNotContain(signedUrl, error.ToString());
+        Assert.DoesNotContain(providerHash, error.ToString());
+    }
+
     private static VkClient Client(HttpMessageHandler api, HttpMessageHandler uploads)
     {
         var session = new VkSession
