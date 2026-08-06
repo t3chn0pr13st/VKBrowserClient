@@ -24,6 +24,7 @@ public sealed class VkClient : IAsyncDisposable
     private VkMessagesService? _messages;
     private VkWallService? _wall;
     private VkClipsService? _clips;
+    private VkLiveService? _live;
 
     public VkClient(ISessionStore store, VkClientOptions? options = null)
     {
@@ -49,6 +50,9 @@ public sealed class VkClient : IAsyncDisposable
 
     /// <summary>Публикация клипов.</summary>
     public VkClipsService Clips => _clips ??= new VkClipsService(this);
+
+    /// <summary>Создание и управление прямыми трансляциями VK Видео.</summary>
+    public VkLiveService Live => _live ??= new VkLiveService(this);
 
     /// <summary>id текущего пользователя (доступен после успешной авторизации).</summary>
     public long? UserId => _session is { UserId: > 0 } s ? s.UserId : null;

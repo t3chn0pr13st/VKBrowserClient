@@ -17,6 +17,7 @@
 - 📤 Отправка сообщений с медиа: фото, документы (файлы/GIF/аудиосообщения), видео.
 - 🖼 Публикация записей на личной стене и в сообществах с фото, каруселями, документами и видео.
 - 🎬 Публикация клипов (VK Клипы) — полный флоу `shortVideo.*`, сохраняемые этапы загрузки, изменение описания и проверка обработки.
+- 🔴 Прямые трансляции VK Видео — typed lifecycle `video.startStreaming` / `stopStreaming`, категории, метаданные, статус/запись, удаление и обложки.
 - 🌊 Потоковая загрузка медиа без чтения больших файлов целиком в память, с безопасным повторным открытием при ретраях.
 - 📦 Экспорт/импорт сессии (файл или base64) для переноса на сервер без браузера.
 - 🧩 Готов к подключению как NuGet-пакет (приватно, через GitHub Packages).
@@ -67,6 +68,16 @@ foreach (var c in dialogs.Items) Console.WriteLine($"[{c.PeerType}] {c.Title}");
 await client.Messages.SendMessageAsync(peerId: 100, text: "Привет", photos: new[] { VkImage.FromFile("pic.jpg") });
 await client.Wall.PostAsync("Пост с картинкой", new[] { VkImage.FromFile("cover.jpg") });
 await client.Wall.PostToCommunityAsync(12345, "Пост", [VkAttachmentSource.Photo("cover.jpg")]);
+
+var live = await client.Live.StartStreamingAsync(new VkLiveStartOptions
+{
+    Name = "Практика в прямом эфире",
+    GroupId = 12345,
+    Publish = false,
+    PostToWall = false,
+});
+Console.WriteLine($"RTMP server: {live.Ingest.Url}");
+// live.Ingest.Key — секрет; не выводите его в обычный лог.
 ```
 
 Для фонового worker публикацию Клипа можно разделить на сохраняемые этапы
@@ -86,12 +97,12 @@ await client.Wall.PostToCommunityAsync(12345, "Пост", [VkAttachmentSource.Ph
 
 ```
 src/VkBrowserClient/            — библиотека (net10.0)
-  VkClient.cs                   — фасад: вход, сессия, .Messages, .Wall, экспорт/импорт
+  VkClient.cs                   — фасад: вход, сессия, .Messages, .Wall, .Clips, .Live, экспорт/импорт
   VkClientOptions.cs            — настройки (по умолчанию = как у веб-клиента)
   Api/VkWebApi.cs               — web_token + вызовы web.api.vk.ru + загрузка фото
   Auth/PlaywrightAuthenticator  — интерактивный вход через браузер
   Session/                      — VkSession, ISessionStore, FileSessionStore, сериализация
-  Services/                     — VkMessagesService, VkWallService, VkMediaUploader, VkClipsService
+  Services/                     — Messages, Wall/Media, Clips и typed VkLiveService
   Messages/                     — разбор ответов (диалоги, история)
   Models/                       — Conversation, VkMessage, VkImage, WallPostResult, …
 samples/VkBrowserClient.ConsoleSample/   — консольный пример со всеми командами
