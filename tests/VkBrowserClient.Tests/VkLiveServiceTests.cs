@@ -186,7 +186,7 @@ public sealed class VkLiveServiceTests
             uploadAttempts++;
             return uploadAttempts == 1
                 ? Json("temporary", HttpStatusCode.ServiceUnavailable)
-                : Json("""{"thumb_json":{"crop":"16:9"},"thumb_size":"1920x1080","random_tag":"tag-1"}""");
+                : Json("""{"upload_id":321,"thumb_size":"1920x1080","random_tag":"tag-1"}""");
         });
         var opens = 0;
         var source = Source("cover.jpg", "image/jpeg", 32_768, () => opens++);
@@ -206,11 +206,11 @@ public sealed class VkLiveServiceTests
             Assert.Contains("name=file", body);
             Assert.Contains("filename=cover.jpg", body);
         });
-        Assert.Equal("{\"crop\":\"16:9\"}", uploaded.ThumbJson);
+        Assert.Equal("{\"upload_id\":321,\"thumb_size\":\"1920x1080\",\"random_tag\":\"tag-1\"}", uploaded.ThumbJson);
         Assert.Equal("1920x1080", uploaded.ThumbSize);
         Assert.Equal("tag-1", uploaded.RandomTag);
         Assert.DoesNotContain("sig=secret", session.ToString());
-        Assert.DoesNotContain("crop", uploaded.ToString());
+        Assert.DoesNotContain("upload_id", uploaded.ToString());
         Assert.DoesNotContain("tag-1", uploaded.ToString());
 
         var getUrl = calls.Single(x => x.Method == "video.getThumbUploadUrl").Form;
@@ -218,7 +218,7 @@ public sealed class VkLiveServiceTests
         var save = calls.Single(x => x.Method == "video.saveUploadedThumb").Form;
         Assert.Equal("-123", save["owner_id"]);
         Assert.Equal("456", save["video_id"]);
-        Assert.Equal("{\"crop\":\"16:9\"}", save["thumb_json"]);
+        Assert.Equal("{\"upload_id\":321,\"thumb_size\":\"1920x1080\",\"random_tag\":\"tag-1\"}", save["thumb_json"]);
         Assert.Equal("1920x1080", save["thumb_size"]);
         Assert.Equal("tag-1", save["random_tag"]);
         Assert.Equal("1", save["set_thumb"]);

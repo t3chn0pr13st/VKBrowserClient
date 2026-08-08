@@ -316,12 +316,19 @@ public sealed class VkLiveService
                     cancellationToken)
                 .ConfigureAwait(false);
             var root = doc.RootElement;
-            if (root.TryGetProperty("response", out var response) && response.ValueKind == JsonValueKind.Object)
-                root = response;
+            if (root.ValueKind != JsonValueKind.Object)
+                throw new VkClientException(
+                    $"Upload-сервер обложки вернул неожиданный ответ: {VkSafeErrorDetails.Describe(root)}");
+            if (root.TryGetProperty("error", out _))
+                throw new VkClientException(
+                    $"Upload-сервер обложки отклонил файл: {VkSafeErrorDetails.Describe(root)}");
 
-            var thumbJson = JsonString(root, "thumb_json");
-            if (string.IsNullOrWhiteSpace(thumbJson))
-                throw new VkClientException("Upload-сервер обложки не вернул thumb_json.");
+            // video.saveUploadedThumb expects the complete upload-server JSON
+            // serialized as the opaque thumb_json value. The upload response
+            // itself does not contain a nested thumb_json field.
+            var thumbJson = root.GetRawText();
+            if (string.IsNullOrWhiteSpace(thumbJson) || thumbJson == "{}")
+                throw new VkClientException("Upload-сервер обложки вернул пустой JSON-ответ.");
 
             return new VkLiveThumbnailUpload
             {
