@@ -64,23 +64,61 @@ public sealed class VkLiveSdkService
         string channelUrl,
         string slotUrl,
         CancellationToken cancellationToken = default)
+        => (await GetStreamSettingsAsync(channelUrl, slotUrl, cancellationToken).ConfigureAwait(false)).Permission;
+
+    /// <summary>Настройки эфира, как их отдаёт сервер.</summary>
+    public async Task<VkLiveSdkSettings> GetStreamSettingsAsync(
+        string channelUrl,
+        string slotUrl,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(channelUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(slotUrl);
 
+        // Именно manage-путь: публичный /stream/slot/ отдаёт состояние эфира для зрителя,
+        // без настроек приватности. Это тот же путь, которым идёт изменение настроек.
         var api = await _client.RequireLiveSdkApiAsync(cancellationToken).ConfigureAwait(false);
         using var data = await api
-            .SendAsync(HttpMethod.Get, $"/v1/channel/{channelUrl}/stream/slot/{slotUrl}", null, cancellationToken)
+            .SendAsync(HttpMethod.Get, $"/v1/channel/{channelUrl}/manage/vk/stream/{slotUrl}", null, cancellationToken)
             .ConfigureAwait(false);
 
-        var slot = data.RootElement.TryGetProperty("streamSlot", out var nested) ? nested : data.RootElement;
-        var raw = slot.TryGetProperty("vkPermission", out var p) ? p.GetString() : null;
+        var slot = FindSlot(data.RootElement);
+        var raw = slot is null ? null : String(slot.Value, "vkPermission");
         if (string.IsNullOrWhiteSpace(raw))
             throw new VkClientException(
-                $"Ответ по слоту {channelUrl}/{slotUrl} не содержит vkPermission: " +
-                VkSafeErrorDetails.Describe(data.RootElement));
+                $"Ответ по слоту {channelUrl}/{slotUrl} не содержит vkPermission. " +
+                VkSafeErrorDetails.DescribeShape(data.RootElement));
 
-        return ParsePermission(raw);
+        return new VkLiveSdkSettings
+        {
+            Permission = ParsePermission(raw),
+            Title = String(slot!.Value, "title")?.Trim() ?? string.Empty,
+        };
+    }
+
+    /// <summary>
+    /// Находит объект слота в ответе. Это API кладёт его то в корень, то в <c>streamSlot</c>,
+    /// то в <c>stream</c>, поэтому опознаём по наличию <c>vkPermission</c>.
+    /// </summary>
+    private static JsonElement? FindSlot(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            return null;
+
+        if (String(root, "vkPermission") is { Length: > 0 })
+            return root;
+
+        foreach (var wrapper in new[] { "streamSlot", "stream", "slot" })
+        {
+            if (root.TryGetProperty(wrapper, out var nested)
+                && nested.ValueKind == JsonValueKind.Object
+                && String(nested, "vkPermission") is { Length: > 0 })
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     // --- маппинг -------------------------------------------------------------

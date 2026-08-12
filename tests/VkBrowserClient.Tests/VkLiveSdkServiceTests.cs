@@ -167,13 +167,30 @@ public sealed class VkLiveSdkServiceTests
             sdk: Handler(async (request, ct) =>
             {
                 call = await SdkCall.FromAsync(request, ct);
-                return Json("""{"data":{"streamSlot":{"slotUrl":"sl_1","vkPermission":"public"}}}""");
+                return Json("""{"data":{"streamSlot":{"slotUrl":"sl_1","vkPermission":"public","title":"Эфир "}}}""");
             }));
 
-        var permission = await client.LiveSdk.GetStreamPermissionAsync("channel1", "sl_1");
+        var settings = await client.LiveSdk.GetStreamSettingsAsync("channel1", "sl_1");
 
-        Assert.Equal("/v1/channel/channel1/stream/slot/sl_1", call!.Path);
-        Assert.Equal(VkLiveSdkPermission.Public, permission);
+        // Публичный /stream/slot/ отдаёт состояние для зрителя и настроек приватности не содержит.
+        Assert.Equal("/v1/channel/channel1/manage/vk/stream/sl_1", call!.Path);
+        Assert.Equal(VkLiveSdkPermission.Public, settings.Permission);
+        // VK возвращает заголовок с хвостовым пробелом — он не должен утекать наружу.
+        Assert.Equal("Эфир", settings.Title);
+    }
+
+    [Fact]
+    public async Task Finds_the_slot_when_the_response_puts_it_at_the_root()
+    {
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler((_, _) => Task.FromResult(
+                Json("""{"data":{"vkPermission":"by_link","title":"Прямо в корне"}}"""))));
+
+        var settings = await client.LiveSdk.GetStreamSettingsAsync("channel1", "sl_1");
+
+        Assert.Equal(VkLiveSdkPermission.ByLink, settings.Permission);
+        Assert.Equal("Прямо в корне", settings.Title);
     }
 
     [Fact]

@@ -325,7 +325,7 @@ public sealed class VkWebApi : IDisposable
 
             // login.vk.ru отвечает {"type":"okay","data":{…}}; у vkvideo.ru обёртка своя,
             // поэтому payload ищем и там, и там, а не полагаемся на одну форму.
-            var payload = ExtractPayload(root);
+            var payload = ExtractPayload(root, _session.UserId);
             var accessToken = payload is { } p && p.TryGetProperty("access_token", out var at)
                 ? at.GetString()
                 : null;
@@ -335,7 +335,8 @@ public sealed class VkWebApi : IDisposable
                 throw new VkSessionExpiredException(
                     $"{host} не выдал web-токен для app_id={appId}. " +
                     "Либо сессия недействительна и нужен повторный вход, либо это приложение здесь не обслуживается. " +
-                    VkSafeErrorDetails.Describe(root));
+                    VkSafeErrorDetails.Describe(root) + ". " +
+                    VkSafeErrorDetails.DescribeShape(root));
             }
 
             var data = payload!.Value;
@@ -348,11 +349,16 @@ public sealed class VkWebApi : IDisposable
     }
 
     /// <summary>
-    /// Находит объект с токеном в ответе web_token. Формы отличаются по хостам, поэтому
-    /// проверяются известные обёртки, а затем — сам корень.
+    /// Находит объект с токеном в ответе web_token. Форма зависит от хоста:
+    /// login.vk.ru отдаёт <c>{"type":"okay","data":{…}}</c>, а vkvideo.ru — массив токенов
+    /// по профилям (<c>user_id</c>, <c>profile_type</c>, <c>access_token</c>, <c>expires</c>,
+    /// <c>is_active</c>), потому что под одним аккаунтом их может быть несколько.
     /// </summary>
-    private static JsonElement? ExtractPayload(JsonElement root)
+    private static JsonElement? ExtractPayload(JsonElement root, long expectedUserId)
     {
+        if (root.ValueKind == JsonValueKind.Array)
+            return PickProfileToken(root, expectedUserId);
+
         if (root.ValueKind != JsonValueKind.Object)
             return null;
 
@@ -367,6 +373,43 @@ public sealed class VkWebApi : IDisposable
         }
 
         return root.TryGetProperty("access_token", out _) ? root : null;
+    }
+
+    /// <summary>
+    /// Выбирает токен нужного профиля. Берём активный и совпадающий по user_id: под одним
+    /// аккаунтом профилей может быть несколько, и взять чужой токен — значит молча уйти
+    /// работать не от того лица.
+    /// </summary>
+    private static JsonElement? PickProfileToken(JsonElement items, long expectedUserId)
+    {
+        JsonElement? fallback = null;
+
+        foreach (var item in items.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+                continue;
+            if (!item.TryGetProperty("access_token", out var token)
+                || token.ValueKind != JsonValueKind.String
+                || string.IsNullOrEmpty(token.GetString()))
+            {
+                continue;
+            }
+
+            // is_active отсутствует — считаем активным: поле может появиться не во всех ответах.
+            var isActive = !item.TryGetProperty("is_active", out var active)
+                           || active.ValueKind != JsonValueKind.False;
+            var matchesUser = expectedUserId <= 0
+                              || (item.TryGetProperty("user_id", out var uid)
+                                  && uid.TryGetInt64(out var id)
+                                  && id == expectedUserId);
+
+            if (isActive && matchesUser)
+                return item;
+
+            fallback ??= item;
+        }
+
+        return fallback;
     }
 
     /// <summary>Разобранный ответ web_token. Токен — секрет, в логи не писать.</summary>

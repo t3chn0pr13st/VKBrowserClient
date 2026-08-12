@@ -166,6 +166,13 @@ try
                 ct);
             break;
 
+        case "livesdkperm":
+            RequireArg(positionals, 1, "livesdkperm <channel_url> <slot_url>");
+            var settings = await client.LiveSdk.GetStreamSettingsAsync(positionals[0], positionals[1], ct);
+            Console.WriteLine($"Приватность слота: {settings.Permission}");
+            Console.WriteLine($"Заголовок: «{settings.Title}»");
+            break;
+
         case "editclip":
             RequireArg(positionals, 1, "editclip <owner_id> <video_id> <новое описание>");
             var applied = await client.Clips.EditDescriptionAsync(

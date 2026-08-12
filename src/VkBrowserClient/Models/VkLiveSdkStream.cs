@@ -20,6 +20,16 @@ public enum VkLiveSdkPermission
     ByLink,
 }
 
+/// <summary>Настройки существующего эфира, прочитанные с сервера.</summary>
+public sealed class VkLiveSdkSettings
+{
+    /// <summary>Кто может смотреть трансляцию — фактическое значение на слоте.</summary>
+    public required VkLiveSdkPermission Permission { get; init; }
+
+    /// <summary>Заголовок трансляции, как его разобрал VK.</summary>
+    public required string Title { get; init; }
+}
+
 /// <summary>Параметры создания эфира сообщества через live-SDK VK Видео.</summary>
 public sealed class VkLiveSdkCreateOptions
 {
