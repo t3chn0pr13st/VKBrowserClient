@@ -26,6 +26,7 @@ public sealed class VkClient : IAsyncDisposable
     private VkWallService? _wall;
     private VkClipsService? _clips;
     private VkLiveService? _live;
+    private VkLiveSdkService? _liveSdk;
 
     public VkClient(ISessionStore store, VkClientOptions? options = null)
     {
@@ -54,6 +55,12 @@ public sealed class VkClient : IAsyncDisposable
 
     /// <summary>Создание и управление прямыми трансляциями VK Видео.</summary>
     public VkLiveService Live => _live ??= new VkLiveService(this);
+
+    /// <summary>
+    /// Эфиры сообществ через live-SDK. Нужен там, где важна приватность самой трансляции:
+    /// у официальных <c>video.*</c> такой настройки нет.
+    /// </summary>
+    public VkLiveSdkService LiveSdk => _liveSdk ??= new VkLiveSdkService(this);
 
     /// <summary>id текущего пользователя (доступен после успешной авторизации).</summary>
     public long? UserId => _session is { UserId: > 0 } s ? s.UserId : null;
