@@ -9,7 +9,7 @@ public sealed class VkLiveSdkApiTests
     [Fact]
     public async Task Issues_sdk_token_through_the_live_app_and_persists_it()
     {
-        var mints = new List<IReadOnlyDictionary<string, string>>();
+        var mints = new List<(Uri Url, IReadOnlyDictionary<string, string> Form)>();
         var sdkCalls = new List<SdkCall>();
         var session = Session();
 
@@ -24,16 +24,20 @@ public sealed class VkLiveSdkApiTests
             }),
             api: Handler(async (request, ct) =>
             {
-                mints.Add(await FormAsync(request, ct));
+                mints.Add((request.RequestUri!, await FormAsync(request, ct)));
                 return Json(WebTokenMinted);
             }));
 
         var sdk = await client.RequireLiveSdkApiAsync(CancellationToken.None);
         using var data = await sdk.SendAsync(HttpMethod.Get, "/v1/user/managed_channel/");
 
-        // Web-токен мятится под app_id живого SDK, а не мессенджера — иначе обмен не примут.
+        // Токен приложения live-SDK выпускается на vkvideo.ru: login.vk.ru на этот app_id
+        // отвечает ошибкой, хотя мессенджеру в той же сессии токен выдаёт.
         var mint = Assert.Single(mints);
-        Assert.Equal("53729707", mint["app_id"]);
+        Assert.Equal("vkvideo.ru", mint.Url.Host);
+        Assert.Equal("53729707", mint.Form["app_id"]);
+        // Запрос повторяет страницу: уже выпущенный web-токен едет в теле.
+        Assert.Equal("test-token", mint.Form["access_token"]);
 
         var exchange = sdkCalls[0];
         Assert.Equal("/oauth/vk/token/standalone", exchange.Path);
@@ -156,6 +160,24 @@ public sealed class VkLiveSdkApiTests
         var sdk = await client.RequireLiveSdkApiAsync(CancellationToken.None);
         await Assert.ThrowsAsync<VkSessionExpiredException>(
             () => sdk.SendAsync(HttpMethod.Get, "/v1/user/current"));
+    }
+
+    [Fact]
+    public async Task Points_at_a_missing_cookie_domain_rather_than_at_an_expired_session()
+    {
+        // Сессии, снятые до появления live-SDK, содержат cookie только для vk.ru,
+        // и vkvideo.ru отвечает им редиректом на вход.
+        await using var client = Client(
+            Session(),
+            sdk: Handler((_, _) => throw new InvalidOperationException("До SDK дойти не должно.")),
+            api: Handler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Found))));
+
+        var sdk = await client.RequireLiveSdkApiAsync(CancellationToken.None);
+        var error = await Assert.ThrowsAsync<VkSessionExpiredException>(
+            () => sdk.SendAsync(HttpMethod.Get, "/v1/user/current"));
+
+        Assert.Contains("нет cookie для vkvideo.ru", error.Message);
+        Assert.DoesNotContain("истекла", error.Message);
     }
 
     [Fact]

@@ -53,6 +53,21 @@ public sealed class VkClientOptions
     /// <summary>Хост live-SDK: каналы, слоты, создание и настройка эфиров.</summary>
     public string LiveSdkBaseUrl { get; set; } = "https://apisdk.live.vkvideo.ru";
 
+    /// <summary>
+    /// Сайт VK Видео. У него собственные cookie на своём домене, и именно они авторизуют
+    /// выпуск web-токена приложения live-SDK — cookie от vk.ru здесь не подходят.
+    /// </summary>
+    public string LiveSdkWebBaseUrl { get; set; } = "https://vkvideo.ru";
+
+    /// <summary>
+    /// Эндпоинт выпуска web-токена для приложения live-SDK.
+    ///
+    /// Это не <see cref="LoginBaseUrl"/>: проверено живым запросом, что
+    /// <c>login.vk.ru/?act=web_token</c> отвечает <c>type=error</c> на <see cref="LiveSdkAppId"/>,
+    /// хотя для <see cref="WebAppId"/> в той же сессии выдаёт токен.
+    /// </summary>
+    public string LiveSdkWebTokenUrl { get; set; } = "https://vkvideo.ru/al_video.php?act=web_token";
+
     /// <summary>Значение заголовка <c>X-App</c>, которым представляется веб-клиент live-SDK.</summary>
     public string LiveSdkAppHeader { get; set; } = "streams_web";
 
