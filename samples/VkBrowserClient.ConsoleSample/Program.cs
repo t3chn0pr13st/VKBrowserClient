@@ -173,6 +173,19 @@ try
             Console.WriteLine($"Заголовок: «{settings.Title}»");
             break;
 
+        case "livestatus":
+            RequireArg(positionals, 1, "livestatus <owner_id> <video_id>");
+            var liveStatus = await client.Live.GetStatusAsync(
+                new VkLiveReference { OwnerId = long.Parse(positionals[0]), VideoId = long.Parse(positionals[1]) }, ct);
+            Console.WriteLine($"Состояние: {liveStatus.State}, приватное: {liveStatus.IsPrivate}");
+            Console.WriteLine($"Заголовок: «{liveStatus.Title}»");
+            // Ключ — секрет: печатаем только форму, чтобы понять, тот ли это ln--токен.
+            var key = liveStatus.AccessKey;
+            Console.WriteLine(key is null or ""
+                ? "access_key: отсутствует"
+                : $"access_key: {key.Length} симв., начинается с «{key[..Math.Min(3, key.Length)]}», ln--формат: {System.Text.RegularExpressions.Regex.IsMatch(key, "^ln-[A-Za-z0-9_-]+$")}");
+            break;
+
         case "editclip":
             RequireArg(positionals, 1, "editclip <owner_id> <video_id> <новое описание>");
             var applied = await client.Clips.EditDescriptionAsync(
