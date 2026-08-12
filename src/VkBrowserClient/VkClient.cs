@@ -27,6 +27,7 @@ public sealed class VkClient : IAsyncDisposable
     private VkClipsService? _clips;
     private VkLiveService? _live;
     private VkLiveSdkService? _liveSdk;
+    private VkGroupsService? _groups;
 
     public VkClient(ISessionStore store, VkClientOptions? options = null)
     {
@@ -61,6 +62,9 @@ public sealed class VkClient : IAsyncDisposable
     /// у официальных <c>video.*</c> такой настройки нет.
     /// </summary>
     public VkLiveSdkService LiveSdk => _liveSdk ??= new VkLiveSdkService(this);
+
+    /// <summary>Сообщества: проверка прав без публикации.</summary>
+    public VkGroupsService Groups => _groups ??= new VkGroupsService(this);
 
     /// <summary>id текущего пользователя (доступен после успешной авторизации).</summary>
     public long? UserId => _session is { UserId: > 0 } s ? s.UserId : null;
