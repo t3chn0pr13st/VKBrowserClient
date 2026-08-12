@@ -224,13 +224,43 @@ public sealed class VkWebApi : IDisposable
 
     private async Task RefreshWebTokenCoreAsync(CancellationToken cancellationToken)
     {
+        var minted = await MintAsync(_options.WebAppId, cancellationToken).ConfigureAwait(false);
+
+        _session.WebToken = minted.AccessToken;
+        _session.WebTokenExpiresAtUnix = minted.ExpiresAtUnix;
+        _session.UserId = minted.UserId ?? _session.UserId;
+        _session.LogoutHash = minted.LogoutHash ?? _session.LogoutHash;
+    }
+
+    /// <summary>
+    /// Выпустить web-токен для стороннего приложения VK, не трогая токен сессии.
+    /// Нужен live-SDK: у него свой app_id, и его токен нельзя класть в <see cref="VkSession.WebToken"/> —
+    /// иначе им начнут ходить в методы web.api.vk.ru, для которых он не выпускался.
+    /// </summary>
+    internal async Task<MintedWebToken> MintWebTokenForAppAsync(string appId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(appId);
+
+        await _tokenGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await MintAsync(appId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _tokenGate.Release();
+        }
+    }
+
+    private async Task<MintedWebToken> MintAsync(string appId, CancellationToken cancellationToken)
+    {
         var url = $"{_options.LoginBaseUrl}/?act=web_token";
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["version"] = "1",
-                ["app_id"] = _options.WebAppId,
+                ["app_id"] = appId,
             }),
         };
         AddWebHeaders(request);
@@ -259,7 +289,8 @@ public sealed class VkWebApi : IDisposable
             if (type != "okay" || !root.TryGetProperty("data", out var data))
             {
                 throw new VkSessionExpiredException(
-                    "login.vk.ru не выдал web-токен. Сессия недействительна, нужен повторный вход. " +
+                    $"login.vk.ru не выдал web-токен для app_id={appId}. " +
+                    "Либо сессия недействительна и нужен повторный вход, либо это приложение здесь не обслуживается. " +
                     VkSafeErrorDetails.Describe(root));
             }
 
@@ -267,12 +298,16 @@ public sealed class VkWebApi : IDisposable
             if (string.IsNullOrEmpty(accessToken))
                 throw new VkSessionExpiredException("Ответ web_token не содержит access_token. Нужен повторный вход.");
 
-            _session.WebToken = accessToken;
-            _session.WebTokenExpiresAtUnix = data.TryGetProperty("expires", out var exp) && exp.TryGetInt64(out var e) ? e : 0;
-            _session.UserId = data.TryGetProperty("user_id", out var uid) && uid.TryGetInt64(out var u) ? u : _session.UserId;
-            _session.LogoutHash = data.TryGetProperty("logout_hash", out var lh) ? lh.GetString() : _session.LogoutHash;
+            return new MintedWebToken(
+                accessToken,
+                data.TryGetProperty("expires", out var exp) && exp.TryGetInt64(out var e) ? e : 0,
+                data.TryGetProperty("user_id", out var uid) && uid.TryGetInt64(out var u) ? u : null,
+                data.TryGetProperty("logout_hash", out var lh) ? lh.GetString() : null);
         }
     }
+
+    /// <summary>Разобранный ответ web_token. Токен — секрет, в логи не писать.</summary>
+    internal sealed record MintedWebToken(string AccessToken, long ExpiresAtUnix, long? UserId, string? LogoutHash);
 
     private bool IsTokenValid()
     {

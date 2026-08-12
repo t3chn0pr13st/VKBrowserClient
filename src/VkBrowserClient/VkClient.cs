@@ -21,6 +21,7 @@ public sealed class VkClient : IAsyncDisposable
 
     private VkSession? _session;
     private VkWebApi? _api;
+    private VkLiveSdkApi? _liveSdkApi;
     private VkMessagesService? _messages;
     private VkWallService? _wall;
     private VkClipsService? _clips;
@@ -138,6 +139,16 @@ public sealed class VkClient : IAsyncDisposable
         return _api!;
     }
 
+    /// <summary>
+    /// Гарантирует авторизацию и возвращает клиент live-SDK VK Видео.
+    /// SDK-токен выпускается лениво, при первом обращении, и живёт в сессии ~30 суток.
+    /// </summary>
+    internal async Task<VkLiveSdkApi> RequireLiveSdkApiAsync(CancellationToken cancellationToken)
+    {
+        var api = await RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        return _liveSdkApi ??= new VkLiveSdkApi(_session!, _options, api);
+    }
+
     /// <summary>Сохранить текущую сессию (web-токен мог обновиться внутри вызова API).</summary>
     internal Task PersistSessionAsync(CancellationToken cancellationToken)
         => _session is null ? Task.CompletedTask : _store.SaveAsync(_session, cancellationToken);
@@ -153,20 +164,28 @@ public sealed class VkClient : IAsyncDisposable
     private async Task AdoptSessionAsync(VkSession session, CancellationToken cancellationToken)
     {
         _session = session;
-        _api?.Dispose();
-        _api = null; // будет пересобран при следующем обращении с новой сессией
+        DisposeApis(); // будут пересобраны при следующем обращении с новой сессией
         await _store.SaveAsync(session, cancellationToken).ConfigureAwait(false);
     }
 
     private void RebuildApi()
     {
-        _api?.Dispose();
+        DisposeApis();
         _api = new VkWebApi(_session!, _options);
+    }
+
+    private void DisposeApis()
+    {
+        // live-SDK держит ссылку на VkWebApi, поэтому переживать его не должен.
+        _liveSdkApi?.Dispose();
+        _liveSdkApi = null;
+        _api?.Dispose();
+        _api = null;
     }
 
     public ValueTask DisposeAsync()
     {
-        _api?.Dispose();
+        DisposeApis();
         return ValueTask.CompletedTask;
     }
 }

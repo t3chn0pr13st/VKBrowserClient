@@ -42,6 +42,30 @@ public sealed class VkClientOptions
     /// <summary>Максимальное время одного потокового upload-запроса.</summary>
     public TimeSpan UploadTimeout { get; set; } = TimeSpan.FromMinutes(30);
 
+    // --- live-SDK VK Видео (apisdk.live.vkvideo.ru) ---------------------------
+
+    /// <summary>
+    /// client_id приложения live-SDK VK Видео. Это НЕ <see cref="WebAppId"/> и не app_id
+    /// VK Видео web (52461373): SDK-токен выдаётся только в обмен на web-токен этого приложения.
+    /// </summary>
+    public string LiveSdkAppId { get; set; } = "53729707";
+
+    /// <summary>Хост live-SDK: каналы, слоты, создание и настройка эфиров.</summary>
+    public string LiveSdkBaseUrl { get; set; } = "https://apisdk.live.vkvideo.ru";
+
+    /// <summary>Значение заголовка <c>X-App</c>, которым представляется веб-клиент live-SDK.</summary>
+    public string LiveSdkAppHeader { get; set; } = "streams_web";
+
+    /// <summary>Значение заголовка <c>X-SDK-App</c>.</summary>
+    public string LiveSdkClientHeader { get; set; } = "vkvideo_live_app";
+
+    /// <summary>
+    /// Запас перед истечением SDK-токена, при котором он выпускается заново.
+    /// Токен живёт 30 суток, поэтому запас крупный: полсуток ничего не стоят,
+    /// а токен, протухший посреди подготовки эфира, стоит дорого.
+    /// </summary>
+    public TimeSpan LiveSdkTokenExpirySkew { get; set; } = TimeSpan.FromHours(12);
+
     /// <summary>
     /// Фабрика интерактивного аутентификатора. По умолчанию — Playwright.
     /// Позволяет подменить способ входа (например, в тестах).
@@ -57,4 +81,5 @@ public sealed class VkClientOptions
     // Test seams remain internal so the public client does not expose transport internals.
     internal Func<HttpMessageHandler>? ApiHttpMessageHandlerFactory { get; set; }
     internal Func<HttpMessageHandler>? UploadHttpMessageHandlerFactory { get; set; }
+    internal Func<HttpMessageHandler>? LiveSdkHttpMessageHandlerFactory { get; set; }
 }
