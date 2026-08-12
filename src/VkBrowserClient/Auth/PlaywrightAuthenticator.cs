@@ -62,6 +62,24 @@ public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator
                 // Но отмену (Ctrl+C) не проглатываем — она должна дойти до вызывающего кода.
             }
 
+            // Заходим на vkvideo.ru: у него собственный набор cookie на своём домене, и без них
+            // не выпустить web-токен приложения live-SDK. Повторная авторизация не нужна —
+            // домены связаны SSO, и cookie ставятся молча при первом заходе.
+            try
+            {
+                await page.GotoAsync(_options.LiveSdkWebBaseUrl, new PageGotoOptions
+                {
+                    WaitUntil = WaitUntilState.DOMContentLoaded,
+                    Timeout = 30_000,
+                }).ConfigureAwait(false);
+                await Task.Delay(2500, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Не критично для остальных возможностей клиента: без этих cookie перестанет
+                // работать только live-SDK, и он скажет об этом явно при первом обращении.
+            }
+
             var session = await BuildSessionAsync(context, page, cancellationToken).ConfigureAwait(false);
 
             if (!session.HasCookies)

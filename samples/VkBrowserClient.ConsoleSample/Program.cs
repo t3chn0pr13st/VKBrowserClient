@@ -18,6 +18,8 @@ using VkBrowserClient;
 //   post <текст> [медиа]                  — опубликовать запись (--photo/--doc/--video)
 //   postgroup <group_id> <текст> [медиа]  — опубликовать запись от имени сообщества
 //   clipgroup <group_id> <видео> [опис.]  — опубликовать клип сообщества
+//   livesdk <group_id> [заголовок]        — создать эфир сообщества через live-SDK
+//                                           (--public/--followers/--admins, по умолчанию по ссылке)
 //   export <файл>                         — выгрузить выбранную сессию в файл
 //   import <файл>                         — загрузить сессию из файла в выбранную
 //   sessions                              — список сохранённых сессий
@@ -150,6 +152,27 @@ try
             Console.WriteLine($"Клип сообщества опубликован: {groupClip.Url}");
             break;
 
+        case "livesdk":
+            RequireArg(positionals, 0, "livesdk <group_id> [заголовок]");
+            // Флаги приватности сюда попадают позиционными — в заголовок им не надо.
+            var liveTitle = positionals.Skip(1)
+                .Where(p => !p.StartsWith("--", StringComparison.Ordinal))
+                .ToArray();
+            await CreateSdkStream(
+                client,
+                long.Parse(positionals[0]),
+                liveTitle.Length > 0 ? string.Join(' ', liveTitle) : "Тестовый эфир",
+                PermissionFromArgs(restArgs),
+                ct);
+            break;
+
+        case "livesdkperm":
+            RequireArg(positionals, 1, "livesdkperm <channel_url> <slot_url>");
+            var settings = await client.LiveSdk.GetStreamSettingsAsync(positionals[0], positionals[1], ct);
+            Console.WriteLine($"Приватность слота: {settings.Permission}");
+            Console.WriteLine($"Заголовок: «{settings.Title}»");
+            break;
+
         case "editclip":
             RequireArg(positionals, 1, "editclip <owner_id> <video_id> <новое описание>");
             var applied = await client.Clips.EditDescriptionAsync(
@@ -185,6 +208,48 @@ static async Task ShowDialogs(VkClient client, CancellationToken ct)
         Console.WriteLine($"{i++,2}. [{TypeLabel(c.PeerType)}] peer={c.PeerId}  {c.Title}{unread}");
     }
 }
+
+// Создаёт эфир сообщества через live-SDK и тут же перечитывает приватность со слота.
+// Перечитывание — не украшение: именно так работает fail-closed проверка, и смысл прогона
+// в том, чтобы увидеть, что сервер согласен с запрошенным значением, а не поверить запросу.
+static async Task CreateSdkStream(
+    VkClient client,
+    long groupId,
+    string title,
+    VkLiveSdkPermission permission,
+    CancellationToken ct)
+{
+    Console.WriteLine($"Создаю эфир сообщества {groupId} с приватностью «{permission}»…");
+
+    var stream = await client.LiveSdk.CreateGroupStreamAsync(new VkLiveSdkCreateOptions
+    {
+        GroupId = groupId,
+        Title = title,
+        Permission = permission,
+    }, ct);
+
+    Console.WriteLine("Создан:");
+    Console.WriteLine($"  канал      {stream.ChannelUrl}");
+    Console.WriteLine($"  слот       {stream.SlotUrl} (id {stream.SlotId})");
+    Console.WriteLine($"  VK-видео   {stream.VkOwnerId}_{stream.VkVideoId}");
+    Console.WriteLine($"  страница   {stream.Url}");
+    Console.WriteLine($"  приватность {stream.Permission}");
+    Console.WriteLine($"  одноразовый ключ: {stream.IsTemporary}");
+    // Ключ потока — секрет: показываем только факт наличия и длину.
+    Console.WriteLine($"  ingest     {stream.Ingest.Url}  ключ: {stream.Ingest.Key.Length} симв.");
+
+    var actual = await client.LiveSdk.GetStreamPermissionAsync(stream.ChannelUrl, stream.SlotUrl, ct);
+    Console.WriteLine($"Приватность, перечитанная со слота: {actual}");
+    Console.WriteLine(actual == permission
+        ? "OK: сервер подтвердил запрошенную приватность."
+        : $"ВНИМАНИЕ: запрошено «{permission}», на слоте «{actual}» — эфир публиковать нельзя.");
+}
+
+static VkLiveSdkPermission PermissionFromArgs(string[] args) =>
+    args.Contains("--public") ? VkLiveSdkPermission.Public
+    : args.Contains("--followers") ? VkLiveSdkPermission.Followers
+    : args.Contains("--admins") ? VkLiveSdkPermission.Admins
+    : VkLiveSdkPermission.ByLink;
 
 static async Task ShowHistory(VkClient client, long peerId, int count, CancellationToken ct)
 {
@@ -341,6 +406,7 @@ static void PrintHelp()
           clip <путь-к-видео> [описание]          опубликовать клип
           clipgroup <group_id> <видео> [опис.]    клип от имени сообщества
           editclip <owner_id> <video_id> <опис.> изменить описание клипа
+          livesdk <group_id> [заголовок]          эфир сообщества через live-SDK
           export <файл>                           выгрузить выбранную сессию в файл
           import <файл>                           загрузить сессию из файла в выбранную
           sessions                                список сохранённых сессий
@@ -352,6 +418,7 @@ static void PrintHelp()
           существующая сессия                     доступна под именем «default»
 
         медиа: --photo <путь> | --doc <путь> | --video <путь> (можно несколько).
+        приватность эфира: --public | --followers | --admins (по умолчанию — по ссылке).
         peer_id: id пользователя, -id сообщества, или 2000000000+chat_id.
         VK_SESSION_PATH задаёт конкретный файл сессии в обход выбора.
         """);

@@ -17,7 +17,9 @@ namespace VkBrowserClient;
 /// </summary>
 public sealed class VkWebApi : IDisposable
 {
-    private static readonly string[] CookieHosts = ["vk.ru", "login.vk.ru", "web.api.vk.ru"];
+    // vkvideo.ru держит собственные cookie на своём домене — без него не выпустить
+    // web-токен приложения live-SDK.
+    private static readonly string[] CookieHosts = ["vk.ru", "login.vk.ru", "web.api.vk.ru", "vkvideo.ru"];
 
     private readonly VkSession _session;
     private readonly VkClientOptions _options;
@@ -224,22 +226,87 @@ public sealed class VkWebApi : IDisposable
 
     private async Task RefreshWebTokenCoreAsync(CancellationToken cancellationToken)
     {
-        var url = $"{_options.LoginBaseUrl}/?act=web_token";
+        var minted = await MintAsync(
+            _options.WebAppId,
+            $"{_options.LoginBaseUrl}/?act=web_token",
+            _options.WebBaseUrl,
+            bearer: null,
+            cancellationToken).ConfigureAwait(false);
+
+        _session.WebToken = minted.AccessToken;
+        _session.WebTokenExpiresAtUnix = minted.ExpiresAtUnix;
+        _session.UserId = minted.UserId ?? _session.UserId;
+        _session.LogoutHash = minted.LogoutHash ?? _session.LogoutHash;
+    }
+
+    /// <summary>
+    /// Выпустить web-токен приложения live-SDK, не трогая токен сессии: его нельзя класть
+    /// в <see cref="VkSession.WebToken"/>, иначе им начнут ходить в методы web.api.vk.ru,
+    /// для которых он не выпускался.
+    ///
+    /// Выпуск идёт на vkvideo.ru, а не на login.vk.ru: последний отвечает <c>type=error</c>
+    /// на этот app_id, хотя для мессенджера в той же сессии выдаёт токен. Запрос повторяет
+    /// то, что делает страница: уже выпущенный web-токен передаётся в теле.
+    /// </summary>
+    internal async Task<MintedWebToken> MintWebTokenForAppAsync(string appId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(appId);
+
+        // Нужен действующий токен мессенджера — он идёт в тело запроса как access_token.
+        await EnsureWebTokenAsync(cancellationToken).ConfigureAwait(false);
+
+        await _tokenGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await MintAsync(
+                appId,
+                _options.LiveSdkWebTokenUrl,
+                _options.LiveSdkWebBaseUrl,
+                _session.WebToken,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _tokenGate.Release();
+        }
+    }
+
+    private async Task<MintedWebToken> MintAsync(
+        string appId,
+        string url,
+        string origin,
+        string? bearer,
+        CancellationToken cancellationToken)
+    {
+        var form = new Dictionary<string, string>
+        {
+            ["version"] = "1",
+            ["app_id"] = appId,
+        };
+        if (!string.IsNullOrEmpty(bearer))
+            form["access_token"] = bearer;
+
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
-            Content = new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["version"] = "1",
-                ["app_id"] = _options.WebAppId,
-            }),
+            Content = new FormUrlEncodedContent(form),
         };
-        AddWebHeaders(request);
+        AddWebHeaders(request, origin);
 
         using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
+        var host = new Uri(url).Host;
         if (response.StatusCode is HttpStatusCode.Found or HttpStatusCode.MovedPermanently)
-            throw new VkSessionExpiredException("login.vk.ru перенаправляет на страницу входа — cookie-сессия истекла.");
+        {
+            // Редирект на вход означает разное в зависимости от того, есть ли вообще cookie этого
+            // домена. У сессий, снятых до появления live-SDK, их нет — и «сессия истекла» тут
+            // отправило бы искать несуществующую проблему.
+            throw new VkSessionExpiredException(HasCookiesFor(host)
+                ? $"{host} перенаправляет на страницу входа — cookie-сессия истекла."
+                : $"В сессии нет cookie для {host}, поэтому выпустить там web-токен нельзя. " +
+                  "Войдите заново: при входе клиент заходит на этот домен и снимает его cookie. " +
+                  "Отдельной авторизации это не требует — домены VK связаны SSO.");
+        }
 
         JsonDocument doc;
         try
@@ -255,24 +322,108 @@ public sealed class VkWebApi : IDisposable
         using (doc)
         {
             var root = doc.RootElement;
-            var type = root.TryGetProperty("type", out var t) ? t.GetString() : null;
-            if (type != "okay" || !root.TryGetProperty("data", out var data))
+
+            // login.vk.ru отвечает {"type":"okay","data":{…}}; у vkvideo.ru обёртка своя,
+            // поэтому payload ищем и там, и там, а не полагаемся на одну форму.
+            var payload = ExtractPayload(root, _session.UserId);
+            var accessToken = payload is { } p && p.TryGetProperty("access_token", out var at)
+                ? at.GetString()
+                : null;
+
+            if (string.IsNullOrEmpty(accessToken))
             {
                 throw new VkSessionExpiredException(
-                    "login.vk.ru не выдал web-токен. Сессия недействительна, нужен повторный вход. " +
-                    VkSafeErrorDetails.Describe(root));
+                    $"{host} не выдал web-токен для app_id={appId}. " +
+                    "Либо сессия недействительна и нужен повторный вход, либо это приложение здесь не обслуживается. " +
+                    VkSafeErrorDetails.Describe(root) + ". " +
+                    VkSafeErrorDetails.DescribeShape(root));
             }
 
-            var accessToken = data.TryGetProperty("access_token", out var at) ? at.GetString() : null;
-            if (string.IsNullOrEmpty(accessToken))
-                throw new VkSessionExpiredException("Ответ web_token не содержит access_token. Нужен повторный вход.");
-
-            _session.WebToken = accessToken;
-            _session.WebTokenExpiresAtUnix = data.TryGetProperty("expires", out var exp) && exp.TryGetInt64(out var e) ? e : 0;
-            _session.UserId = data.TryGetProperty("user_id", out var uid) && uid.TryGetInt64(out var u) ? u : _session.UserId;
-            _session.LogoutHash = data.TryGetProperty("logout_hash", out var lh) ? lh.GetString() : _session.LogoutHash;
+            var data = payload!.Value;
+            return new MintedWebToken(
+                accessToken,
+                data.TryGetProperty("expires", out var exp) && exp.TryGetInt64(out var e) ? e : 0,
+                data.TryGetProperty("user_id", out var uid) && uid.TryGetInt64(out var u) ? u : null,
+                data.TryGetProperty("logout_hash", out var lh) ? lh.GetString() : null);
         }
     }
+
+    /// <summary>
+    /// Находит объект с токеном в ответе web_token. Форма зависит от хоста:
+    /// login.vk.ru отдаёт <c>{"type":"okay","data":{…}}</c>, а vkvideo.ru — массив токенов
+    /// по профилям (<c>user_id</c>, <c>profile_type</c>, <c>access_token</c>, <c>expires</c>,
+    /// <c>is_active</c>), потому что под одним аккаунтом их может быть несколько.
+    /// </summary>
+    private static JsonElement? ExtractPayload(JsonElement root, long expectedUserId)
+    {
+        if (root.ValueKind == JsonValueKind.Array)
+            return PickProfileToken(root, expectedUserId);
+
+        if (root.ValueKind != JsonValueKind.Object)
+            return null;
+
+        // login.vk.ru: успех помечен type=okay, и только тогда data осмысленна.
+        if (root.TryGetProperty("type", out var type) && type.GetString() != "okay")
+            return null;
+
+        foreach (var wrapper in new[] { "data", "response", "payload" })
+        {
+            if (root.TryGetProperty(wrapper, out var nested) && nested.ValueKind == JsonValueKind.Object)
+                return nested;
+        }
+
+        return root.TryGetProperty("access_token", out _) ? root : null;
+    }
+
+    /// <summary>
+    /// Выбирает токен нужного профиля. Берём активный и совпадающий по user_id: под одним
+    /// аккаунтом профилей может быть несколько, и взять чужой токен — значит молча уйти
+    /// работать не от того лица.
+    /// </summary>
+    private static JsonElement? PickProfileToken(JsonElement items, long expectedUserId)
+    {
+        JsonElement? fallback = null;
+
+        foreach (var item in items.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+                continue;
+            if (!item.TryGetProperty("access_token", out var token)
+                || token.ValueKind != JsonValueKind.String
+                || string.IsNullOrEmpty(token.GetString()))
+            {
+                continue;
+            }
+
+            // is_active отсутствует — считаем активным: поле может появиться не во всех ответах.
+            var isActive = !item.TryGetProperty("is_active", out var active)
+                           || active.ValueKind != JsonValueKind.False;
+            var matchesUser = expectedUserId <= 0
+                              || (item.TryGetProperty("user_id", out var uid)
+                                  && uid.TryGetInt64(out var id)
+                                  && id == expectedUserId);
+
+            if (isActive && matchesUser)
+                return item;
+
+            fallback ??= item;
+        }
+
+        return fallback;
+    }
+
+    /// <summary>Разобранный ответ web_token. Токен — секрет, в логи не писать.</summary>
+    internal sealed record MintedWebToken(string AccessToken, long ExpiresAtUnix, long? UserId, string? LogoutHash);
+
+    /// <summary>Есть ли в сессии хоть одна cookie, чей домен покрывает указанный хост.</summary>
+    private bool HasCookiesFor(string host) =>
+        _session.Cookies?.Any(cookie =>
+        {
+            var domain = (cookie.Domain ?? string.Empty).TrimStart('.');
+            return domain.Length > 0
+                   && (host.Equals(domain, StringComparison.OrdinalIgnoreCase)
+                       || host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase));
+        }) ?? false;
 
     private bool IsTokenValid()
     {
@@ -328,10 +479,12 @@ public sealed class VkWebApi : IDisposable
         return true;
     }
 
-    private void AddWebHeaders(HttpRequestMessage request)
+    private void AddWebHeaders(HttpRequestMessage request) => AddWebHeaders(request, _options.WebBaseUrl);
+
+    private static void AddWebHeaders(HttpRequestMessage request, string origin)
     {
-        request.Headers.TryAddWithoutValidation("Origin", _options.WebBaseUrl);
-        request.Headers.TryAddWithoutValidation("Referer", _options.WebBaseUrl + "/");
+        request.Headers.TryAddWithoutValidation("Origin", origin);
+        request.Headers.TryAddWithoutValidation("Referer", origin + "/");
         request.Headers.TryAddWithoutValidation("Accept", "application/json, text/plain, */*");
     }
 

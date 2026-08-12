@@ -68,6 +68,30 @@ internal static class VkSafeErrorDetails
         return result.Length <= MaxLength ? result : result[..MaxLength];
     }
 
+    /// <summary>
+    /// Описывает форму неожиданного ответа: имена полей и типы значений, но не сами значения.
+    /// Имена полей — часть контракта API, а не данные пользователя; без них незнакомую форму
+    /// ответа нельзя опознать вообще, и разбор превращается в угадывание.
+    /// </summary>
+    public static string DescribeShape(JsonElement payload) => "структура — " + Shape(payload, depth: 2);
+
+    private static string Shape(JsonElement value, int depth) => value.ValueKind switch
+    {
+        JsonValueKind.Object when depth > 0 =>
+            "{" + string.Join(", ", value.EnumerateObject()
+                .Take(40)
+                .Select(p => $"{p.Name}: {Shape(p.Value, depth - 1)}")) + "}",
+        JsonValueKind.Object => $"object({value.EnumerateObject().Count()} полей)",
+        JsonValueKind.Array when depth > 0 && value.GetArrayLength() > 0 =>
+            $"array({value.GetArrayLength()}) из {Shape(value[0], depth - 1)}",
+        JsonValueKind.Array => $"array({value.GetArrayLength()})",
+        JsonValueKind.String => "string",
+        JsonValueKind.Number => "number",
+        JsonValueKind.True or JsonValueKind.False => "bool",
+        JsonValueKind.Null => "null",
+        _ => "?",
+    };
+
     private static void AddFacts(JsonElement value, ICollection<string> facts)
     {
         if (value.ValueKind != JsonValueKind.Object)
