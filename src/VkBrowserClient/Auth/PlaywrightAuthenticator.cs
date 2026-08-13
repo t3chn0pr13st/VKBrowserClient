@@ -10,7 +10,7 @@ namespace VkBrowserClient;
 /// (телефон/пароль/2FA/капча), после чего мы снимаем cookie-сессию — этого
 /// достаточно, чтобы дальше работать в фоне без UI (web-токен мятится из cookies).
 /// </summary>
-public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator
+public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator, ISessionCookieTopUp
 {
     private readonly VkClientOptions _options;
 
@@ -93,10 +93,131 @@ public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator
         }
     }
 
-    private async Task<IBrowser> LaunchAsync(IPlaywright playwright)
+    /// <inheritdoc />
+    public async Task<bool> TopUpAsync(VkSession session, string host, CancellationToken cancellationToken = default)
     {
-        // Для входа окно должно быть видимым (капча/2FA), поэтому Headless = false.
-        var launchOptions = new BrowserTypeLaunchOptions { Headless = false };
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(host);
+        if (!session.HasCookies)
+            throw new VkAuthenticationException("Нечего дотягивать: в сессии нет cookies.");
+
+        // Пользовательских действий здесь не требуется, поэтому сначала пробуем без окна.
+        // Если VK не отдаёт cookie фоновому браузеру, повторяем с видимым — вход всё равно не нужен.
+        foreach (var headless in new[] { true, false })
+        {
+            if (await TryTopUpAsync(session, host, headless, cancellationToken).ConfigureAwait(false))
+                return true;
+
+            Status(headless
+                ? $"{host} не отдал cookie фоновому браузеру — повторяю с видимым окном…"
+                : $"{host} не отдал cookie и в видимом окне.");
+        }
+
+        return false;
+    }
+
+    private async Task<bool> TryTopUpAsync(
+        VkSession session,
+        string host,
+        bool headless,
+        CancellationToken cancellationToken)
+    {
+        using var playwright = await Playwright.CreateAsync().ConfigureAwait(false);
+        var browser = await LaunchAsync(playwright, headless).ConfigureAwait(false);
+        try
+        {
+            var context = await browser.NewContextAsync(new BrowserNewContextOptions
+            {
+                UserAgent = string.IsNullOrWhiteSpace(session.UserAgent) ? null : session.UserAgent,
+                ViewportSize = new ViewportSize { Width = 1180, Height = 820 },
+            }).ConfigureAwait(false);
+
+            var seeded = session.Cookies.Select(ToPlaywrightCookie).Where(x => x is not null).Cast<Cookie>().ToArray();
+            if (seeded.Length == 0)
+                throw new VkAuthenticationException("Не удалось перенести cookies сессии в браузер.");
+            await context.AddCookiesAsync(seeded).ConfigureAwait(false);
+
+            var page = await context.NewPageAsync().ConfigureAwait(false);
+            Status($"Открываю https://{host}/ в браузере, чтобы забрать cookie домена…");
+            // NetworkIdle у VK не наступает: страница держит соединения постоянно.
+            await page.GotoAsync($"https://{host}/", new PageGotoOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = 60_000,
+            }).ConfigureAwait(false);
+            // Переход между доменами делает скрипт страницы, поэтому даём ему отработать.
+            await Task.Delay(4000, cancellationToken).ConfigureAwait(false);
+
+            var fresh = (await context.CookiesAsync().ConfigureAwait(false))
+                .Where(c => BelongsTo(c.Domain, host))
+                .ToArray();
+
+            // Наличие любых cookie домена ещё ничего не значит: VK ставит служебные и без входа.
+            // Признак состоявшегося перехода — авторизационная cookie.
+            if (!fresh.Any(c => c.Name.StartsWith("remixdsid", StringComparison.OrdinalIgnoreCase)
+                                || c.Name.Equals("remixsid", StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            Merge(session, fresh, host);
+            Status($"Добрано cookie домена {host}: {fresh.Length}.");
+            return true;
+        }
+        finally
+        {
+            try { await browser.CloseAsync().ConfigureAwait(false); } catch { /* ignore */ }
+        }
+    }
+
+    private static void Merge(VkSession session, IEnumerable<BrowserContextCookiesResult> fresh, string host)
+    {
+        session.Cookies.RemoveAll(c => BelongsTo(c.Domain, host));
+        foreach (var c in fresh)
+        {
+            session.Cookies.Add(new VkCookie
+            {
+                Name = c.Name,
+                Value = c.Value,
+                Domain = c.Domain,
+                Path = string.IsNullOrEmpty(c.Path) ? "/" : c.Path,
+                Expires = c.Expires > 0 ? c.Expires : null,
+                HttpOnly = c.HttpOnly,
+                Secure = c.Secure,
+                SameSite = c.SameSite.ToString(),
+            });
+        }
+    }
+
+    private static Cookie? ToPlaywrightCookie(VkCookie cookie)
+    {
+        if (string.IsNullOrEmpty(cookie.Name) || string.IsNullOrWhiteSpace(cookie.Domain))
+            return null;
+
+        return new Cookie
+        {
+            Name = cookie.Name,
+            Value = cookie.Value ?? "",
+            Domain = cookie.Domain,
+            Path = string.IsNullOrEmpty(cookie.Path) ? "/" : cookie.Path,
+            // Playwright ждёт -1 для сессионных cookie, а не отсутствие значения.
+            Expires = cookie.Expires is > 0 ? (float)cookie.Expires.Value : -1,
+            HttpOnly = cookie.HttpOnly,
+            Secure = cookie.Secure,
+        };
+    }
+
+    private static bool BelongsTo(string? domain, string host)
+    {
+        var value = (domain ?? "").TrimStart('.');
+        return value.Equals(host, StringComparison.OrdinalIgnoreCase)
+               || value.EndsWith('.' + host, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<IBrowser> LaunchAsync(IPlaywright playwright, bool headless = false)
+    {
+        // Для входа окно должно быть видимым (капча/2FA); для дозабора cookie — не обязано.
+        var launchOptions = new BrowserTypeLaunchOptions { Headless = headless };
         try
         {
             return await playwright.Chromium.LaunchAsync(launchOptions).ConfigureAwait(false);
