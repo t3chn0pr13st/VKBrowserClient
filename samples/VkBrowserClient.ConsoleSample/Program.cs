@@ -18,6 +18,7 @@ using VkBrowserClient;
 //   post <текст> [медиа]                  — опубликовать запись (--photo/--doc/--video)
 //   postgroup <group_id> <текст> [медиа]  — опубликовать запись от имени сообщества
 //   clipgroup <group_id> <видео> [опис.]  — опубликовать клип сообщества
+//   livesdksession                        — добрать cookie домена live-SDK в сессию
 //   livesdk <group_id> [заголовок]        — создать эфир сообщества через live-SDK
 //                                           (--public/--followers/--admins, по умолчанию по ссылке)
 //   export <файл>                         — выгрузить выбранную сессию в файл
@@ -184,6 +185,12 @@ try
             Console.WriteLine(key is null or ""
                 ? "access_key: отсутствует"
                 : $"access_key: {key.Length} симв., начинается с «{key[..Math.Min(3, key.Length)]}», ln--формат: {System.Text.RegularExpressions.Regex.IsMatch(key, "^ln-[A-Za-z0-9_-]+$")}");
+            break;
+
+        case "livesdksession":
+            Console.WriteLine(await client.EnsureLiveSdkSessionAsync(ct)
+                ? "Сессия готова к live-SDK: cookie домена на месте."
+                : "Не удалось подготовить сессию к live-SDK — нужен повторный вход.");
             break;
 
         case "editclip":

@@ -156,9 +156,60 @@ public sealed class VkClient : IAsyncDisposable
     /// </summary>
     internal async Task<VkLiveSdkApi> RequireLiveSdkApiAsync(CancellationToken cancellationToken)
     {
-        var api = await RequireApiAsync(cancellationToken).ConfigureAwait(false);
-        return _liveSdkApi ??= new VkLiveSdkApi(_session!, _options, api);
+        if (_api is null)
+            await EnsureAuthenticatedAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureLiveSdkCookiesAsync(cancellationToken).ConfigureAwait(false);
+        return _liveSdkApi ??= new VkLiveSdkApi(_session!, _options, _api!);
     }
+
+    /// <summary>
+    /// Live-SDK мятит токен на своём домене, у которого собственные cookie. Сессии, снятые до того,
+    /// как аутентификатор стал туда заходить, их не содержат — но полноценный вход ради этого не
+    /// нужен: браузеру достаточно один раз открыть домен, VK передаст сессию сам.
+    ///
+    /// Проверка стоит здесь, а не в <see cref="EnsureAuthenticatedAsync"/>, чтобы её цену платили
+    /// только те, кому live-SDK действительно нужен: остальным возможностям клиента эти cookie
+    /// безразличны.
+    /// </summary>
+    /// <summary>
+    /// Готовит сессию к работе с live-SDK: при необходимости добирает cookie его домена, не требуя
+    /// повторного входа. Возвращает <c>false</c>, если добрать не удалось — тогда live-SDK
+    /// откажет с явной ошибкой при первом же обращении.
+    /// </summary>
+    public async Task<bool> EnsureLiveSdkSessionAsync(CancellationToken cancellationToken = default)
+    {
+        if (_api is null)
+            await EnsureAuthenticatedAsync(cancellationToken).ConfigureAwait(false);
+        return await EnsureLiveSdkCookiesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> EnsureLiveSdkCookiesAsync(CancellationToken cancellationToken)
+    {
+        var host = new Uri(_options.LiveSdkWebBaseUrl).Host;
+        if (_session is null)
+            return false;
+        if (HasCookiesFor(_session, host))
+            return true;
+
+        if (_authenticator is not ISessionCookieTopUp topUp)
+            return false;
+
+        _options.StatusCallback?.Invoke($"В сессии нет cookie {host} — пробую добрать их без повторного входа…");
+        if (!await topUp.TopUpAsync(_session, host, cancellationToken).ConfigureAwait(false))
+            return false;
+
+        await _store.SaveAsync(_session, cancellationToken).ConfigureAwait(false);
+        RebuildApi();
+        return true;
+    }
+
+    private static bool HasCookiesFor(VkSession session, string host) =>
+        session.Cookies.Any(c =>
+        {
+            var domain = (c.Domain ?? "").TrimStart('.');
+            return domain.Equals(host, StringComparison.OrdinalIgnoreCase)
+                   || domain.EndsWith('.' + host, StringComparison.OrdinalIgnoreCase);
+        });
 
     /// <summary>Сохранить текущую сессию (web-токен мог обновиться внутри вызова API).</summary>
     internal Task PersistSessionAsync(CancellationToken cancellationToken)
