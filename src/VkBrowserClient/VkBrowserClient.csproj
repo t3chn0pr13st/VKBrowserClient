@@ -14,7 +14,7 @@
 
     <!-- NuGet-пакет -->
     <PackageId>VkBrowserClient</PackageId>
-    <Version>0.7.1</Version>
+    <Version>0.7.2</Version>
     <Authors>technopriest</Authors>
     <Product>VkBrowserClient</Product>
     <Description>Неофициальный клиент vk.ru: вход через браузер (Playwright), сохранение cookie-сессии и обновление короткоживущего web-токена для фоновой работы без UI. Поддерживает сообщения, стену, клипы и полный lifecycle прямых трансляций VK Видео.</Description>

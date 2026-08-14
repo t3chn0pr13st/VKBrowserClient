@@ -218,5 +218,136 @@ public sealed class VkLiveSdkServiceTests
             () => client.LiveSdk.CreateGroupStreamAsync(new VkLiveSdkCreateOptions { GroupId = 0, Title = "t" }));
         await Assert.ThrowsAsync<ArgumentException>(
             () => client.LiveSdk.CreateGroupStreamAsync(new VkLiveSdkCreateOptions { GroupId = 1, Title = "  " }));
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => client.LiveSdk.UpdateStreamAsync("channel1", "sl_1", new VkLiveSdkPatchOptions()));
+    }
+
+    [Theory]
+    [InlineData(VkLiveSdkPermission.Public, VkLiveSdkPermission.ByLink, "by_link")]
+    [InlineData(VkLiveSdkPermission.ByLink, VkLiveSdkPermission.Public, "public")]
+    public async Task Updates_a_slot_with_a_full_preserved_form_and_reads_it_back(
+        VkLiveSdkPermission before,
+        VkLiveSdkPermission after,
+        string expectedPermission)
+    {
+        var calls = 0;
+        SdkCall? put = null;
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler(async (request, ct) =>
+            {
+                calls++;
+                if (request.Method == HttpMethod.Put)
+                {
+                    put = await SdkCall.FromAsync(request, ct);
+                    return Json("""{"data":{}}""");
+                }
+
+                return Json(FullSettings(calls == 1 ? before : after));
+            }));
+
+        var actual = await client.LiveSdk.UpdateStreamAsync("channel35338325", "sl_163026", new VkLiveSdkPatchOptions
+        {
+            Permission = after,
+            Title = "Новый заголовок",
+            Description = "Новое описание",
+        });
+
+        Assert.Equal(3, calls);
+        Assert.Equal(VkLiveSdkPermission.Public == after ? VkLiveSdkPermission.Public : VkLiveSdkPermission.ByLink, actual.Permission);
+        Assert.Equal($"/v1/channel/channel35338325/manage/vk/stream/sl_163026", put!.Path);
+        Assert.Equal("channel35338325", put.Form["channel_url"]);
+        Assert.Equal("sl_163026", put.Form["slot_url"]);
+        Assert.Equal(expectedPermission, put.Form["vk_permissions"]);
+        Assert.Equal("42", put.Form["category_id"]);
+        Assert.Equal("false", put.Form["is_infinite"]);
+        Assert.Equal("true", put.Form["is_should_record"]);
+        Assert.Equal("false", put.Form["is_playback_disabled"]);
+        Assert.Equal("false", put.Form["is_vk_wallpost_create"]);
+        Assert.Equal("https://example.test/info", put.Form["vk_additional_url"]);
+        Assert.Equal("59868532", put.Form["vk_group_id"]);
+        Assert.Equal("false", put.Form["use_stream_preview_mode"]);
+        Assert.Equal("false", put.Form["is_chat_disabled"]);
+        Assert.Equal("true", put.Form["is_vk_notify_followers"]);
+        Assert.Equal("Новое описание", put.Form["vk_description"]);
+        Assert.Equal("Академия", put.Form["name"]);
+        Assert.Equal("2026-08-14T10:00:00Z", put.Form["planned_at"]);
+        Assert.Equal("2026-08-14T12:00:00Z", put.Form["planned_end_at"]);
+        using var titleBlocks = JsonDocument.Parse(put.Form["title_data"]);
+        using var titleContent = JsonDocument.Parse(titleBlocks.RootElement[0].GetProperty("content").GetString()!);
+        Assert.Equal("Новый заголовок", titleContent.RootElement[0].GetString());
+    }
+
+    [Fact]
+    public async Task Returns_the_actual_readback_when_vk_does_not_apply_the_requested_permission()
+    {
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler((request, _) => Task.FromResult(
+                request.Method == HttpMethod.Put
+                    ? Json("""{"data":{}}""")
+                    : Json(FullSettings(VkLiveSdkPermission.Public)))));
+
+        var actual = await client.LiveSdk.UpdateStreamAsync("channel1", "sl_1", new VkLiveSdkPatchOptions
+        {
+            Permission = VkLiveSdkPermission.ByLink,
+        });
+
+        Assert.Equal(VkLiveSdkPermission.Public, actual.Permission);
+    }
+
+    [Fact]
+    public async Task Refuses_to_put_when_the_settings_snapshot_is_incomplete()
+    {
+        var putCalled = false;
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler((request, _) =>
+            {
+                putCalled |= request.Method == HttpMethod.Put;
+                return Task.FromResult(Json("""{"data":{"streamSlot":{"vkPermission":"public","title":"Эфир"}}}"""));
+            }));
+
+        var error = await Assert.ThrowsAsync<VkClientException>(() =>
+            client.LiveSdk.UpdateStreamAsync("channel1", "sl_1", new VkLiveSdkPatchOptions
+            {
+                Permission = VkLiveSdkPermission.ByLink,
+            }));
+
+        Assert.Contains("vkGroupId", error.Message);
+        Assert.False(putCalled);
+    }
+
+    [Fact]
+    public async Task Propagates_a_failed_put_without_claiming_success()
+    {
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler((request, _) => Task.FromResult(
+                request.Method == HttpMethod.Put
+                    ? Json("""{"error":"rejected"}""", System.Net.HttpStatusCode.BadRequest)
+                    : Json(FullSettings(VkLiveSdkPermission.Public)))));
+
+        await Assert.ThrowsAsync<VkClientException>(() =>
+            client.LiveSdk.UpdateStreamAsync("channel1", "sl_1", new VkLiveSdkPatchOptions
+            {
+                Permission = VkLiveSdkPermission.ByLink,
+            }));
+    }
+
+    private static string FullSettings(VkLiveSdkPermission permission)
+    {
+        var rawPermission = permission == VkLiveSdkPermission.ByLink ? "by_link" : "public";
+        return """
+            {"data":{"streamSlot":{
+              "slotUrl":"sl_163026","vkPermission":"$PERMISSION","title":"Текущий заголовок",
+              "categoryId":42,"isInfinite":false,"isShouldRecord":true,
+              "isPlaybackDisabled":false,"isVkWallpostCreate":false,
+              "vkAdditionalUrl":"https://example.test/info","vkGroupId":59868532,
+              "useStreamPreviewMode":false,"isChatDisabled":false,"isVkNotifyFollowers":true,
+              "vkDescription":"Текущее описание","name":"Академия",
+              "plannedAt":"2026-08-14T10:00:00Z","plannedEndAt":"2026-08-14T12:00:00Z"
+            }}}
+            """.Replace("$PERMISSION", rawPermission, StringComparison.Ordinal);
     }
 }

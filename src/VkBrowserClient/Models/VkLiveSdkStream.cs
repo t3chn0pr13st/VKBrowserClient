@@ -30,6 +30,30 @@ public sealed class VkLiveSdkSettings
     public required string Title { get; init; }
 }
 
+/// <summary>
+/// Изменения существующего live-slot. SDK VK требует при <c>PUT</c> полную форму,
+/// поэтому клиент сначала читает текущие настройки и заменяет только заданные поля.
+/// </summary>
+public sealed class VkLiveSdkPatchOptions
+{
+    /// <summary>Новая приватность эфира; <see langword="null"/> сохраняет текущую.</summary>
+    public VkLiveSdkPermission? Permission { get; init; }
+
+    /// <summary>Новый заголовок; <see langword="null"/> сохраняет текущий.</summary>
+    public string? Title { get; init; }
+
+    /// <summary>Новое описание; <see langword="null"/> сохраняет текущее.</summary>
+    public string? Description { get; init; }
+
+    internal void Validate()
+    {
+        if (Permission is null && Title is null && Description is null)
+            throw new ArgumentException("Нужно указать хотя бы одно изменение live-slot.");
+        if (Title is not null && string.IsNullOrWhiteSpace(Title))
+            throw new ArgumentException("Title не может быть пустым.", nameof(Title));
+    }
+}
+
 /// <summary>Параметры создания эфира сообщества через live-SDK VK Видео.</summary>
 public sealed class VkLiveSdkCreateOptions
 {
