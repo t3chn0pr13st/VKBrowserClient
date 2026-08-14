@@ -57,12 +57,6 @@ internal static class LiveSdkHarness
                 (_, _) => throw new InvalidOperationException("Upload не ожидался.")),
         });
 
-    private sealed class NeverInteractiveAuthenticator : IInteractiveAuthenticator
-    {
-        public Task<VkSession> AuthenticateAsync(CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("Unit test attempted interactive VK authentication.");
-    }
-
     public static RecordingHandler Handler(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) => new(send);
 

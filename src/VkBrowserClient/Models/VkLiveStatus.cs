@@ -46,7 +46,14 @@ public sealed class VkLiveStatus
     /// <summary>Готовый provider embed/player URL, если он уже доступен.</summary>
     public string? PlayerUrl { get; init; }
 
+    /// <summary>
+    /// VK не всегда возвращает <c>is_private</c> для live-SDK объектов. Проверяйте
+    /// <see cref="PrivacyKnown"/> прежде чем трактовать <see cref="IsPrivate"/> как readback.
+    /// </summary>
     public bool IsPrivate { get; init; }
+
+    /// <summary>Присутствовал ли поддерживаемый <c>is_private</c> в ответе <c>video.get</c>.</summary>
+    public bool PrivacyKnown { get; init; }
     public bool CanEdit { get; init; }
     public bool CanDelete { get; init; }
     public long Spectators { get; init; }

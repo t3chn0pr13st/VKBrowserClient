@@ -462,6 +462,7 @@ public sealed class VkLiveService
             catch (ArgumentOutOfRangeException) { }
         }
 
+        var privacyKnown = HasBoolean(item, "is_private");
         return new VkLiveStatus
         {
             OwnerId = ownerId,
@@ -469,9 +470,12 @@ public sealed class VkLiveService
             State = state,
             Title = String(item, "title"),
             Description = String(item, "description"),
-            AccessKey = String(item, "access_key") ?? fallback.AccessKey,
+            AccessKey = String(item, "access_key") ??
+                        ExtractLinkAccessKey(String(item, "vk_live_video_id")) ??
+                        fallback.AccessKey,
             PlayerUrl = String(item, "player"),
             IsPrivate = Boolean(item, "is_private"),
+            PrivacyKnown = privacyKnown,
             CanEdit = Boolean(item, "can_edit"),
             CanDelete = Boolean(item, "can_delete"),
             Spectators = Math.Max(0, Int64(item, "spectators")),
@@ -488,6 +492,18 @@ public sealed class VkLiveService
         AccessKey = reference.AccessKey,
         State = VkLiveStatusState.NotFound,
     };
+
+    private static string? ExtractLinkAccessKey(string? compositeVideoId)
+    {
+        if (string.IsNullOrWhiteSpace(compositeVideoId)) return null;
+        var marker = compositeVideoId.IndexOf("_ln-", StringComparison.Ordinal);
+        if (marker < 0) return null;
+        var value = compositeVideoId[(marker + 1)..];
+        if (value.Length <= 3 || value.Any(ch =>
+                !char.IsAsciiLetterOrDigit(ch) && ch is not '-' and not '_'))
+            return null;
+        return value;
+    }
 
     private static JsonElement FirstVideo(JsonElement response)
     {
@@ -612,6 +628,18 @@ public sealed class VkLiveService
             JsonValueKind.True => true,
             JsonValueKind.Number => item.TryGetInt64(out var number) && number != 0,
             JsonValueKind.String => item.GetString() is "1" or "true",
+            _ => false,
+        };
+    }
+
+    private static bool HasBoolean(JsonElement value, string property)
+    {
+        if (!value.TryGetProperty(property, out var item)) return false;
+        return item.ValueKind switch
+        {
+            JsonValueKind.True or JsonValueKind.False => true,
+            JsonValueKind.Number => item.TryGetInt64(out _),
+            JsonValueKind.String => item.GetString() is "0" or "1" or "true" or "false",
             _ => false,
         };
     }

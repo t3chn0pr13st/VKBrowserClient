@@ -297,6 +297,38 @@ public sealed class VkLiveSdkServiceTests
     }
 
     [Fact]
+    public async Task Preserves_the_live_settings_shape_returned_by_the_real_manage_endpoint()
+    {
+        var calls = 0;
+        SdkCall? put = null;
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler(async (request, ct) =>
+            {
+                calls++;
+                if (request.Method == HttpMethod.Put)
+                {
+                    put = await SdkCall.FromAsync(request, ct);
+                    return Json("""{"data":{}}""");
+                }
+
+                return Json(RealManageSettings(calls == 1
+                    ? VkLiveSdkPermission.ByLink
+                    : VkLiveSdkPermission.Public));
+            }));
+
+        var actual = await client.LiveSdk.UpdateStreamAsync(
+            "channel35338325",
+            "sl_163026",
+            new VkLiveSdkPatchOptions { Permission = VkLiveSdkPermission.Public });
+
+        Assert.Equal(VkLiveSdkPermission.Public, actual.Permission);
+        Assert.Equal("59868532", put!.Form["vk_group_id"]);
+        Assert.Equal("false", put.Form["use_stream_preview_mode"]);
+        Assert.Equal("42", put.Form["category_id"]);
+    }
+
+    [Fact]
     public async Task Refuses_to_put_when_the_settings_snapshot_is_incomplete()
     {
         var putCalled = false;
@@ -348,6 +380,25 @@ public sealed class VkLiveSdkServiceTests
               "vkDescription":"Текущее описание","name":"Академия",
               "plannedAt":"2026-08-14T10:00:00Z","plannedEndAt":"2026-08-14T12:00:00Z"
             }}}
+            """.Replace("$PERMISSION", rawPermission, StringComparison.Ordinal);
+    }
+
+    private static string RealManageSettings(VkLiveSdkPermission permission)
+    {
+        var rawPermission = permission == VkLiveSdkPermission.ByLink ? "by_link" : "public";
+        return """
+            {"data":{
+              "credentials":{"streamServer":"rtmp://example","streamKey":"secret"},
+              "channel":{"id":35338325,"channelUrl":"channel35338325"},
+              "streamSlot":{
+                "slotUrl":"sl_163026","vkPermission":"$PERMISSION","title":"Текущий заголовок",
+                "category":{"id":42,"title":"Education"},"isInfinite":false,"isShouldRecord":true,
+                "isPlaybackDisabled":false,"isVkWallpostCreate":false,"vkAdditionalUrl":"",
+                "usePreviewMode":false,"isChatDisabled":false,"isVkNotifyFollowers":false,
+                "vkDescription":"Текущее описание","plannedAt":null,"plannedEndAt":null
+              },
+              "video":{"vkOwnerId":-59868532,"vkVideoId":456239773,"vkPostId":0}
+            }}
             """.Replace("$PERMISSION", rawPermission, StringComparison.Ordinal);
     }
 }

@@ -92,6 +92,18 @@ public sealed class VkLiveSdkApiTests
     }
 
     [Fact]
+    public async Task Mutation_accepts_a_success_response_without_a_data_envelope()
+    {
+        await using var client = Client(
+            SessionWithSdkToken("stored-token"),
+            sdk: Handler((_, _) => Task.FromResult(Json("""{"status":"ok"}"""))));
+
+        var sdk = await client.RequireLiveSdkApiAsync(CancellationToken.None);
+
+        await sdk.SendForSuccessAsync(HttpMethod.Put, "/v1/channel/channel1/manage/vk/stream/sl_1");
+    }
+
+    [Fact]
     public async Task Reissues_a_token_that_expires_within_the_skew()
     {
         var session = Session();
