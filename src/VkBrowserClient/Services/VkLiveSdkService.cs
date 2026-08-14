@@ -71,6 +71,42 @@ public sealed class VkLiveSdkService
         string channelUrl,
         string slotUrl,
         CancellationToken cancellationToken = default)
+        => (await ReadStreamSettingsAsync(channelUrl, slotUrl, cancellationToken).ConfigureAwait(false)).Settings;
+
+    /// <summary>
+    /// Изменить существующий live-slot без сброса остальных настроек.
+    /// VK принимает только полную форму: метод читает слот, накладывает patch,
+    /// отправляет <c>PUT</c>, затем перечитывает фактическое состояние.
+    /// </summary>
+    public async Task<VkLiveSdkSettings> UpdateStreamAsync(
+        string channelUrl,
+        string slotUrl,
+        VkLiveSdkPatchOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(channelUrl);
+        ArgumentException.ThrowIfNullOrWhiteSpace(slotUrl);
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
+
+        var current = await ReadStreamSettingsAsync(channelUrl, slotUrl, cancellationToken).ConfigureAwait(false);
+        var form = BuildUpdateForm(channelUrl, slotUrl, current, options);
+
+        var api = await _client.RequireLiveSdkApiAsync(cancellationToken).ConfigureAwait(false);
+        using (await api
+                   .SendAsync(HttpMethod.Put, $"/v1/channel/{channelUrl}/manage/vk/stream/{slotUrl}", form, cancellationToken)
+                   .ConfigureAwait(false))
+        {
+        }
+
+        await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+        return (await ReadStreamSettingsAsync(channelUrl, slotUrl, cancellationToken).ConfigureAwait(false)).Settings;
+    }
+
+    private async Task<StreamSettingsSnapshot> ReadStreamSettingsAsync(
+        string channelUrl,
+        string slotUrl,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(channelUrl);
         ArgumentException.ThrowIfNullOrWhiteSpace(slotUrl);
@@ -89,12 +125,97 @@ public sealed class VkLiveSdkService
                 $"Ответ по слоту {channelUrl}/{slotUrl} не содержит vkPermission. " +
                 VkSafeErrorDetails.DescribeShape(data.RootElement));
 
-        return new VkLiveSdkSettings
+        var settings = new VkLiveSdkSettings
         {
             Permission = ParsePermission(raw),
             Title = String(slot!.Value, "title")?.Trim() ?? string.Empty,
         };
+        return new StreamSettingsSnapshot(settings, data.RootElement.Clone(), slot.Value.Clone());
     }
+
+    private static Dictionary<string, string> BuildUpdateForm(
+        string channelUrl,
+        string slotUrl,
+        StreamSettingsSnapshot current,
+        VkLiveSdkPatchOptions patch)
+    {
+        var root = current.Root;
+        var slot = current.Slot;
+        var title = patch.Title?.Trim() ?? current.Settings.Title;
+        if (string.IsNullOrWhiteSpace(title))
+            throw MissingUpdateField("title");
+
+        var groupId = Scalar(slot, "vkGroupId", "vk_group_id")
+                      ?? Scalar(root, "vkGroupId", "vk_group_id")
+                      ?? NestedScalar(root, "channel", "vkGroupId", "vk_group_id")
+                      ?? throw MissingUpdateField("vkGroupId");
+
+        return new Dictionary<string, string>
+        {
+            ["channel_url"] = channelUrl,
+            ["slot_url"] = slotUrl,
+            ["vk_permissions"] = Permission(patch.Permission ?? current.Settings.Permission),
+            ["category_id"] = Scalar(slot, "categoryId", "category_id")
+                              ?? NestedScalar(slot, "category", "id")
+                              ?? string.Empty,
+            ["is_infinite"] = RequiredBool(slot, "isInfinite", "is_infinite"),
+            ["is_should_record"] = RequiredBool(slot, "isShouldRecord", "is_should_record"),
+            ["is_playback_disabled"] = RequiredBool(slot, "isPlaybackDisabled", "is_playback_disabled"),
+            ["is_vk_wallpost_create"] = RequiredBool(slot, "isVkWallpostCreate", "is_vk_wallpost_create"),
+            ["vk_additional_url"] = Scalar(slot, "vkAdditionalUrl", "vk_additional_url") ?? string.Empty,
+            ["vk_group_id"] = groupId,
+            ["title_data"] = TitleData(title),
+            ["use_stream_preview_mode"] = RequiredBool(slot, "useStreamPreviewMode", "use_stream_preview_mode"),
+            ["is_chat_disabled"] = RequiredBool(slot, "isChatDisabled", "is_chat_disabled"),
+            ["is_vk_notify_followers"] = RequiredBool(slot, "isVkNotifyFollowers", "is_vk_notify_followers"),
+            ["vk_description"] = patch.Description ?? Scalar(slot, "vkDescription", "vk_description") ?? string.Empty,
+            ["name"] = Scalar(slot, "name") ?? Scalar(root, "name") ?? string.Empty,
+            ["planned_at"] = Scalar(slot, "plannedAt", "planned_at") ?? string.Empty,
+            ["planned_end_at"] = Scalar(slot, "plannedEndAt", "planned_end_at") ?? string.Empty,
+        };
+    }
+
+    private static VkClientException MissingUpdateField(string field) =>
+        new($"Ответ live-SDK не содержит обязательное поле '{field}'; безопасно обновить slot целиком нельзя.");
+
+    private static string RequiredBool(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!element.TryGetProperty(name, out var value)) continue;
+            if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return Bool(value.GetBoolean());
+            if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var parsed)) return Bool(parsed);
+        }
+        throw MissingUpdateField(names[0]);
+    }
+
+    private static string? NestedScalar(JsonElement element, string objectName, params string[] names) =>
+        element.TryGetProperty(objectName, out var nested) && nested.ValueKind == JsonValueKind.Object
+            ? Scalar(nested, names)
+            : null;
+
+    private static string? Scalar(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!element.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                continue;
+            return value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString(),
+                JsonValueKind.Number => value.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                _ => null,
+            };
+        }
+        return null;
+    }
+
+    private sealed record StreamSettingsSnapshot(
+        VkLiveSdkSettings Settings,
+        JsonElement Root,
+        JsonElement Slot);
 
     /// <summary>
     /// Находит объект слота в ответе. Это API кладёт его то в корень, то в <c>streamSlot</c>,

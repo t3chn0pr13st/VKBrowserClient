@@ -35,17 +35,33 @@ internal static class LiveSdkHarness
         session.LiveSdkToken = token;
         session.LiveSdkDeviceId = "test-device";
         session.LiveSdkTokenExpiresAtUnix = DateTimeOffset.UtcNow.AddDays(20).ToUnixTimeSeconds();
+        session.Cookies.Add(new VkCookie
+        {
+            Name = "remixdsid",
+            Value = "video-secret",
+            Domain = ".vkvideo.ru",
+            Secure = true,
+            HttpOnly = true,
+        });
         return session;
     }
 
     public static VkClient Client(VkSession session, HttpMessageHandler sdk, HttpMessageHandler? api = null) =>
         new(new MemorySessionStore(session), new VkClientOptions
         {
+            // Unit tests must never fall through to the default Playwright authenticator.
+            AuthenticatorFactory = _ => new NeverInteractiveAuthenticator(),
             ApiHttpMessageHandlerFactory = () => api ?? Handler((_, _) => Task.FromResult(Json(WebTokenMinted))),
             LiveSdkHttpMessageHandlerFactory = () => sdk,
             UploadHttpMessageHandlerFactory = () => Handler(
                 (_, _) => throw new InvalidOperationException("Upload не ожидался.")),
         });
+
+    private sealed class NeverInteractiveAuthenticator : IInteractiveAuthenticator
+    {
+        public Task<VkSession> AuthenticateAsync(CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Unit test attempted interactive VK authentication.");
+    }
 
     public static RecordingHandler Handler(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) => new(send);
