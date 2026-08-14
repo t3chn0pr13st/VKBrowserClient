@@ -293,6 +293,7 @@ public sealed class PublicationApiTests
         };
         var options = new VkClientOptions
         {
+            AuthenticatorFactory = _ => new NeverInteractiveAuthenticator(),
             ApiHttpMessageHandlerFactory = () => api,
             UploadHttpMessageHandlerFactory = () => uploads
         };

@@ -292,6 +292,7 @@ public sealed class VkLiveServiceTests
         Assert.Equal(VkLiveStatusState.Processing, processing.State);
         Assert.Equal(VkLiveStatusState.Ready, ready.State);
         Assert.True(ready.IsPrivate);
+        Assert.True(ready.PrivacyKnown);
         Assert.True(ready.CanEdit);
         Assert.True(ready.CanDelete);
         Assert.Equal("new-key", ready.AccessKey);
@@ -317,6 +318,19 @@ public sealed class VkLiveServiceTests
         Assert.Equal(-123, status.OwnerId);
         Assert.Equal(456, status.VideoId);
         Assert.Equal("access", status.AccessKey);
+    }
+
+    [Fact]
+    public async Task Status_extracts_the_ln_grant_from_vk_live_video_id()
+    {
+        var api = new RecordingHandler((_, _) => Task.FromResult(Json(
+            """{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","upcoming":1,"vk_live_video_id":"-123_456_ln-synthetic_Grant-01"}]}}""")));
+        await using var client = Client(api);
+
+        var status = await client.Live.GetStatusAsync(-123, 456, cancellationToken: default);
+
+        Assert.Equal("ln-synthetic_Grant-01", status.AccessKey);
+        Assert.False(status.PrivacyKnown);
     }
 
     [Fact]
@@ -406,6 +420,7 @@ public sealed class VkLiveServiceTests
         };
         var options = new VkClientOptions
         {
+            AuthenticatorFactory = _ => new NeverInteractiveAuthenticator(),
             ApiHttpMessageHandlerFactory = () => api,
             UploadHttpMessageHandlerFactory = () => uploads ?? new RecordingHandler(
                 (_, _) => throw new InvalidOperationException("Upload was not expected."))

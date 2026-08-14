@@ -77,6 +77,31 @@ public sealed class VkLiveSdkApi : IDisposable
         ArgumentNullException.ThrowIfNull(method);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
+        var body = await SendForSuccessCoreAsync(method, path, form, cancellationToken).ConfigureAwait(false);
+        return ParseData(body, $"{method} {path}");
+    }
+
+    /// <summary>
+    /// Выполнить изменяющий запрос, для которого успешный live-SDK может вернуть пустой ответ
+    /// или JSON без конверта <c>data</c>. HTTP-успех всё равно должен подтверждаться отдельным GET.
+    /// </summary>
+    internal async Task SendForSuccessAsync(
+        HttpMethod method,
+        string path,
+        IReadOnlyDictionary<string, string>? form = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(method);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        _ = await SendForSuccessCoreAsync(method, path, form, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> SendForSuccessCoreAsync(
+        HttpMethod method,
+        string path,
+        IReadOnlyDictionary<string, string>? form,
+        CancellationToken cancellationToken)
+    {
         await EnsureTokenAsync(cancellationToken).ConfigureAwait(false);
 
         var (status, body) = await SendRawAsync(method, path, form, cancellationToken).ConfigureAwait(false);
@@ -95,7 +120,7 @@ public sealed class VkLiveSdkApi : IDisposable
             throw new VkClientException(
                 $"live-SDK вернул HTTP {(int)status} на {method} {path}: {VkSafeErrorDetails.Describe(body)}");
 
-        return ParseData(body, $"{method} {path}");
+        return body;
     }
 
     private async Task<(HttpStatusCode Status, string Body)> SendRawAsync(

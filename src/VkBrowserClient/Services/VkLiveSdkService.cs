@@ -93,11 +93,13 @@ public sealed class VkLiveSdkService
         var form = BuildUpdateForm(channelUrl, slotUrl, current, options);
 
         var api = await _client.RequireLiveSdkApiAsync(cancellationToken).ConfigureAwait(false);
-        using (await api
-                   .SendAsync(HttpMethod.Put, $"/v1/channel/{channelUrl}/manage/vk/stream/{slotUrl}", form, cancellationToken)
-                   .ConfigureAwait(false))
-        {
-        }
+        await api
+            .SendForSuccessAsync(
+                HttpMethod.Put,
+                $"/v1/channel/{channelUrl}/manage/vk/stream/{slotUrl}",
+                form,
+                cancellationToken)
+            .ConfigureAwait(false);
 
         await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
         return (await ReadStreamSettingsAsync(channelUrl, slotUrl, cancellationToken).ConfigureAwait(false)).Settings;
@@ -148,7 +150,9 @@ public sealed class VkLiveSdkService
         var groupId = Scalar(slot, "vkGroupId", "vk_group_id")
                       ?? Scalar(root, "vkGroupId", "vk_group_id")
                       ?? NestedScalar(root, "channel", "vkGroupId", "vk_group_id")
-                      ?? throw MissingUpdateField("vkGroupId");
+                      ?? NestedScalar(root, "video", "vkOwnerId", "vk_owner_id")
+                      ?? throw MissingUpdateField("vkGroupId", root);
+        groupId = NormalizeVkGroupId(groupId, root);
 
         return new Dictionary<string, string>
         {
@@ -165,7 +169,11 @@ public sealed class VkLiveSdkService
             ["vk_additional_url"] = Scalar(slot, "vkAdditionalUrl", "vk_additional_url") ?? string.Empty,
             ["vk_group_id"] = groupId,
             ["title_data"] = TitleData(title),
-            ["use_stream_preview_mode"] = RequiredBool(slot, "useStreamPreviewMode", "use_stream_preview_mode"),
+            ["use_stream_preview_mode"] = RequiredBool(
+                slot,
+                "useStreamPreviewMode",
+                "usePreviewMode",
+                "use_stream_preview_mode"),
             ["is_chat_disabled"] = RequiredBool(slot, "isChatDisabled", "is_chat_disabled"),
             ["is_vk_notify_followers"] = RequiredBool(slot, "isVkNotifyFollowers", "is_vk_notify_followers"),
             ["vk_description"] = patch.Description ?? Scalar(slot, "vkDescription", "vk_description") ?? string.Empty,
@@ -175,8 +183,16 @@ public sealed class VkLiveSdkService
         };
     }
 
-    private static VkClientException MissingUpdateField(string field) =>
-        new($"Ответ live-SDK не содержит обязательное поле '{field}'; безопасно обновить slot целиком нельзя.");
+    private static VkClientException MissingUpdateField(string field, JsonElement? payload = null) =>
+        new($"Ответ live-SDK не содержит обязательное поле '{field}'; безопасно обновить slot целиком нельзя." +
+            (payload is { } value ? " " + VkSafeErrorDetails.DescribeShape(value) : string.Empty));
+
+    private static string NormalizeVkGroupId(string raw, JsonElement payload)
+    {
+        if (!long.TryParse(raw, out var value) || value == 0 || value == long.MinValue)
+            throw MissingUpdateField("vkGroupId", payload);
+        return Math.Abs(value).ToString();
+    }
 
     private static string RequiredBool(JsonElement element, params string[] names)
     {
@@ -186,7 +202,7 @@ public sealed class VkLiveSdkService
             if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return Bool(value.GetBoolean());
             if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var parsed)) return Bool(parsed);
         }
-        throw MissingUpdateField(names[0]);
+        throw MissingUpdateField(names[0], element);
     }
 
     private static string? NestedScalar(JsonElement element, string objectName, params string[] names) =>
