@@ -34,6 +34,15 @@ public sealed class VkSession
     public string? UserAgent { get; set; }
 
     /// <summary>
+    /// Web-токен приложения «VK Видео» (api.vkvideo.ru). Отдельный от <see cref="WebToken"/>:
+    /// он выпускается на другой app_id и годится только для этого хоста.
+    /// </summary>
+    public string? VideoToken { get; set; }
+
+    /// <summary>Unix-время истечения <see cref="VideoToken"/>.</summary>
+    public long VideoTokenExpiresAtUnix { get; set; }
+
+    /// <summary>
     /// Bearer-токен live-SDK VK Видео (apisdk.live.vkvideo.ru). В отличие от <see cref="WebToken"/>
     /// живёт ~30 суток и выпускается в обмен на web-токен приложения live-SDK.
     /// </summary>

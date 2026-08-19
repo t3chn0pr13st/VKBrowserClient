@@ -11,6 +11,9 @@ public enum VkLivePrivacy
 
     /// <summary>Доступно только владельцу.</summary>
     OnlyMe,
+
+    /// <summary>Доступно всем, у кого есть ссылка.</summary>
+    ByLink,
 }
 
 /// <summary>Параметры официального метода <c>video.startStreaming</c>.</summary>
@@ -66,6 +69,7 @@ public sealed class VkLiveStartOptions
     {
         VkLivePrivacy.Friends => "friends",
         VkLivePrivacy.OnlyMe => "only_me",
+        VkLivePrivacy.ByLink => "by_link",
         _ => "all",
     };
 }
@@ -99,4 +103,22 @@ public sealed class VkLiveUpdateOptions
             throw new ArgumentException("Не задано ни одного поля трансляции для изменения.");
         }
     }
+}
+
+/// <summary>Итог смены приватности видеозаписи через приложение «VK Видео».</summary>
+public sealed class VkVideoPrivacyResult
+{
+    /// <summary>VK принял запрос на изменение.</summary>
+    public bool Accepted { get; init; }
+
+    /// <summary>
+    /// Приватность, прочитанная после сохранения: <c>by_link</c>, <c>all</c> и подобное.
+    /// <see langword="null"/> означает «VK не сообщил», а не «доступно всем».
+    /// </summary>
+    public string? Privacy { get; init; }
+
+    /// <summary>Подтверждено ли ожидаемое значение перечитыванием.</summary>
+    public bool Confirms(VkLivePrivacy expected) =>
+        Privacy is not null &&
+        string.Equals(Privacy, VkLiveStartOptions.Privacy(expected), StringComparison.OrdinalIgnoreCase);
 }

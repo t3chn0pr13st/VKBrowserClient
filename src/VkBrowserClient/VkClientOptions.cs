@@ -68,6 +68,22 @@ public sealed class VkClientOptions
     /// </summary>
     public string LiveSdkWebTokenUrl { get; set; } = "https://vkvideo.ru/al_video.php?act=web_token";
 
+    // --- VK Видео web (api.vkvideo.ru) ----------------------------------------
+
+    /// <summary>
+    /// client_id приложения «VK Видео» в вебе. Приватность видео сообщества правится
+    /// только под ним: те же <c>video.edit</c> с <c>privacy_view</c> под
+    /// <see cref="WebAppId"/> на <see cref="ApiBaseUrl"/> отвечают успехом, но настройку
+    /// не применяют. Снято с живого редактора 19.08.2026.
+    /// </summary>
+    public string VideoAppId { get; set; } = "52461373";
+
+    /// <summary>Хост API, который использует редактор VK Видео.</summary>
+    public string VideoApiBaseUrl { get; set; } = "https://api.vkvideo.ru";
+
+    /// <summary>Версия API в запросах редактора VK Видео.</summary>
+    public string VideoApiVersion { get; set; } = "5.285";
+
     /// <summary>Значение заголовка <c>X-App</c>, которым представляется веб-клиент live-SDK.</summary>
     public string LiveSdkAppHeader { get; set; } = "streams_web";
 

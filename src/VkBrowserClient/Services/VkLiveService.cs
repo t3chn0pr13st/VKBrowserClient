@@ -188,6 +188,109 @@ public sealed class VkLiveService
     }
 
     /// <summary>
+    /// Задать приватность самой видеозаписи через приложение «VK Видео».
+    ///
+    /// Это отдельная настройка от приватности эфира: у видео сообщества её меняет только
+    /// этот путь. Тот же <c>video.edit</c> под токеном мессенджера отвечает успехом и
+    /// оставляет запись открытой для всех — проверено на живом сообществе 19.08.2026.
+    /// </summary>
+    public async Task<VkVideoPrivacyResult> SetVideoPrivacyAsync(
+        long ownerId,
+        long videoId,
+        VkLivePrivacy view,
+        string? name = null,
+        string? description = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateReference(ownerId, videoId);
+
+        var parameters = new Dictionary<string, string>
+        {
+            ["owner_id"] = ownerId.ToString(),
+            ["video_id"] = videoId.ToString(),
+            ["privacy_view"] = VkLiveStartOptions.Privacy(view),
+        };
+        AddOptional(parameters, "name", name);
+        AddOptional(parameters, "desc", description);
+
+        var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        using (var doc = await api.CallVideoAsync("video.edit", parameters, cancellationToken).ConfigureAwait(false))
+        {
+            var response = ResponseOrThrow(doc, "video.edit");
+            var accepted = response.ValueKind switch
+            {
+                JsonValueKind.Object => Boolean(response, "success"),
+                JsonValueKind.Number => response.TryGetInt64(out var value) && value != 0,
+                JsonValueKind.True => true,
+                _ => false,
+            };
+            if (!accepted)
+            {
+                await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+                return new VkVideoPrivacyResult { Accepted = false };
+            }
+        }
+
+        var confirmed = await GetVideoPrivacyAsync(ownerId, videoId, cancellationToken).ConfigureAwait(false);
+        await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+        return new VkVideoPrivacyResult { Accepted = true, Privacy = confirmed };
+    }
+
+    /// <summary>
+    /// Прочитать приватность видео через приложение «VK Видео». Возвращает
+    /// <see langword="null"/>, когда VK не отдаёт поле: это «неизвестно», а не «открыто».
+    /// </summary>
+    public async Task<string?> GetVideoPrivacyAsync(
+        long ownerId,
+        long videoId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateReference(ownerId, videoId);
+        var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        using var doc = await api.CallVideoAsync(
+            "video.get",
+            new Dictionary<string, string>
+            {
+                ["owner_id"] = ownerId.ToString(),
+                ["videos"] = $"{ownerId}_{videoId}",
+                ["count"] = "1",
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        if (!doc.RootElement.TryGetProperty("response", out var response)
+            || !response.TryGetProperty("items", out var items)
+            || items.ValueKind != JsonValueKind.Array
+            || items.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        return ReadPrivacyView(items[0]);
+    }
+
+    /// <summary>
+    /// VK отдаёт privacy_view то строкой, то объектом с <c>category</c>, то списком.
+    /// Нераспознанная форма — это «неизвестно».
+    /// </summary>
+    private static string? ReadPrivacyView(JsonElement item)
+    {
+        if (!item.TryGetProperty("privacy_view", out var privacy))
+            return null;
+        return privacy.ValueKind switch
+        {
+            JsonValueKind.String => privacy.GetString(),
+            JsonValueKind.Object => privacy.TryGetProperty("category", out var category)
+                                    && category.ValueKind == JsonValueKind.String
+                ? category.GetString()
+                : null,
+            JsonValueKind.Array => privacy.GetArrayLength() > 0 && privacy[0].ValueKind == JsonValueKind.String
+                ? privacy[0].GetString()
+                : null,
+            _ => null,
+        };
+    }
+
+    /// <summary>
     /// Получить состояние по стабильному owner_id/video_id. Передавайте сохранённый
     /// access_key для непубличной трансляции; NotFound в таком случае означает также
     /// «недоступно с этим ключом».

@@ -240,6 +240,90 @@ public sealed class VkWebApi : IDisposable
     }
 
     /// <summary>
+    /// Вызвать метод API под приложением «VK Видео» на его хосте. Отдельный путь нужен
+    /// именно для приватности видео сообщества: под токеном мессенджера тот же
+    /// <c>video.edit</c> отвечает успехом и ничего не меняет.
+    /// </summary>
+    public async Task<JsonDocument> CallVideoAsync(
+        string method,
+        IReadOnlyDictionary<string, string>? parameters = null,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureVideoTokenAsync(cancellationToken).ConfigureAwait(false);
+
+        var doc = await InvokeVideoRawAsync(method, parameters, cancellationToken).ConfigureAwait(false);
+        if (!TryGetError(doc, out var code, out var msg))
+            return doc;
+
+        if (code != 5)
+        {
+            doc.Dispose();
+            throw new VkApiException(method, code, msg);
+        }
+
+        doc.Dispose();
+        _session.VideoToken = null;
+        _session.VideoTokenExpiresAtUnix = 0;
+        await EnsureVideoTokenAsync(cancellationToken).ConfigureAwait(false);
+        doc = await InvokeVideoRawAsync(method, parameters, cancellationToken).ConfigureAwait(false);
+        if (!TryGetError(doc, out var retryCode, out var retryMessage))
+            return doc;
+
+        doc.Dispose();
+        if (retryCode == 5)
+        {
+            throw new VkSessionExpiredException(
+                $"Токен VK Видео не удалось использовать даже после обновления: {retryMessage}. Нужен повторный вход.");
+        }
+        throw new VkApiException(method, retryCode, retryMessage);
+    }
+
+    private async Task EnsureVideoTokenAsync(CancellationToken cancellationToken)
+    {
+        if (IsVideoTokenValid())
+            return;
+        var minted = await MintWebTokenForAppAsync(_options.VideoAppId, cancellationToken).ConfigureAwait(false);
+        _session.VideoToken = minted.AccessToken;
+        _session.VideoTokenExpiresAtUnix = minted.ExpiresAtUnix;
+    }
+
+    private bool IsVideoTokenValid() =>
+        !string.IsNullOrEmpty(_session.VideoToken)
+        && _session.VideoTokenExpiresAtUnix > DateTimeOffset.UtcNow.Add(_options.TokenExpirySkew).ToUnixTimeSeconds();
+
+    private async Task<JsonDocument> InvokeVideoRawAsync(
+        string method,
+        IReadOnlyDictionary<string, string>? parameters,
+        CancellationToken cancellationToken)
+    {
+        var url = $"{_options.VideoApiBaseUrl}/method/{method}"
+                  + $"?v={_options.VideoApiVersion}&client_id={_options.VideoAppId}";
+
+        var form = new Dictionary<string, string>();
+        if (parameters is not null)
+            foreach (var kv in parameters)
+                form[kv.Key] = kv.Value;
+        form["access_token"] = _session.VideoToken ?? string.Empty;
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = new FormUrlEncodedContent(form) };
+        AddWebHeaders(request, _options.LiveSdkWebBaseUrl);
+
+        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            return JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            throw new VkClientException(
+                $"Метод '{method}' на {_options.VideoApiBaseUrl} вернул не-JSON ответ (HTTP {(int)response.StatusCode}): " +
+                VkSafeErrorDetails.Describe(body));
+        }
+    }
+
+    /// <summary>
     /// Выпустить web-токен приложения live-SDK, не трогая токен сессии: его нельзя класть
     /// в <see cref="VkSession.WebToken"/>, иначе им начнут ходить в методы web.api.vk.ru,
     /// для которых он не выпускался.

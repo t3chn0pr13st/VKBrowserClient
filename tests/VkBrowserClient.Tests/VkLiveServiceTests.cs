@@ -399,6 +399,71 @@ public sealed class VkLiveServiceTests
         Assert.Equal(0, calls);
     }
 
+    [Fact]
+    public async Task Video_privacy_goes_to_the_vk_video_app_on_its_own_host()
+    {
+        var requests = new List<(string Url, IReadOnlyDictionary<string, string> Form)>();
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var url = request.RequestUri!.ToString();
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            requests.Add((url, call.Form));
+            if (url.Contains("act=web_token", StringComparison.Ordinal))
+                return Json("""{"type":"okay","data":{"access_token":"video-app-token","expires":1800,"user_id":42}}""");
+            if (url.Contains("video.edit", StringComparison.Ordinal))
+                return Json("""{"response":{"success":1}}""");
+            return Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"privacy_view":"by_link"}]}}""");
+        });
+
+        await using var client = Client(api);
+        var result = await client.Live.SetVideoPrivacyAsync(
+            -123, 456, VkLivePrivacy.ByLink, name: "Йога-пикник");
+
+        Assert.True(result.Accepted);
+        Assert.Equal("by_link", result.Privacy);
+        Assert.True(result.Confirms(VkLivePrivacy.ByLink));
+
+        // Токен выпускается под приложением VK Видео на его сайте.
+        var mint = requests[0];
+        Assert.Contains("vkvideo.ru/al_video.php?act=web_token", mint.Url, StringComparison.Ordinal);
+        Assert.Equal("52461373", mint.Form["app_id"]);
+
+        // Правка уходит на хост VK Видео с его client_id и версией.
+        var edit = requests[1];
+        Assert.StartsWith("https://api.vkvideo.ru/method/video.edit?", edit.Url, StringComparison.Ordinal);
+        Assert.Contains("client_id=52461373", edit.Url, StringComparison.Ordinal);
+        Assert.Contains("v=5.285", edit.Url, StringComparison.Ordinal);
+        Assert.Equal("-123", edit.Form["owner_id"]);
+        Assert.Equal("456", edit.Form["video_id"]);
+        Assert.Equal("by_link", edit.Form["privacy_view"]);
+        Assert.Equal("Йога-пикник", edit.Form["name"]);
+        Assert.Equal("video-app-token", edit.Form["access_token"]);
+        // Описание не отправляется: пустое значение стёрло бы текущее.
+        Assert.DoesNotContain("desc", edit.Form.Keys);
+    }
+
+    [Fact]
+    public async Task Video_privacy_readback_treats_a_missing_field_as_unknown()
+    {
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var url = request.RequestUri!.ToString();
+            await ApiCall.FromAsync(request, cancellationToken);
+            if (url.Contains("act=web_token", StringComparison.Ordinal))
+                return Json("""{"type":"okay","data":{"access_token":"video-app-token","expires":1800,"user_id":42}}""");
+            if (url.Contains("video.edit", StringComparison.Ordinal))
+                return Json("""{"response":{"success":1}}""");
+            return Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456}]}}""");
+        });
+
+        await using var client = Client(api);
+        var result = await client.Live.SetVideoPrivacyAsync(-123, 456, VkLivePrivacy.ByLink);
+
+        Assert.True(result.Accepted);
+        Assert.Null(result.Privacy);
+        Assert.False(result.Confirms(VkLivePrivacy.ByLink));
+    }
+
     private static VkClient Client(HttpMessageHandler api, HttpMessageHandler? uploads = null)
     {
         var session = new VkSession
