@@ -135,6 +135,13 @@ shortVideo.create(file_size, group_id)  →  { owner_id, video_id, upload_url (o
 POST video_file на upload_url           →  { video_hash, size, owner_id, video_id }             # мелкие — 1 POST, крупные — чанки
 shortVideo.encodeProgress(video_id, owner_id, hash=video_hash)  →  { percents, is_ready, image:[кадры обложки] }   # опрос до is_ready
 shortVideo.edit(video_id, owner_id, description, privacy_view, privacy_comment)                 # метаданные/обложка
+
+# Приватность видеозаписи сообщества — приложение «VK Видео», свой хост и свой токен.
+# Снято с живого редактора 19.08.2026: тот же video.edit под токеном мессенджера на
+# web.api.vk.ru отвечает успехом и настройку не применяет.
+POST vkvideo.ru/al_video.php?act=web_token  (version=1, app_id=52461373)      # токен приложения
+POST api.vkvideo.ru/method/video.edit?v=5.285&client_id=52461373
+     owner_id, video_id, privacy_view=by_link|all|only_me[, name, desc]        # приватность записи
 shortVideo.publish(video_id, owner_id, wallpost, publish_date=0, license_agree=1, ref)          # публикация
 ```
 
