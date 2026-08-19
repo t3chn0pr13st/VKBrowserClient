@@ -47,6 +47,12 @@ public sealed class VkLiveStatus
     public string? PlayerUrl { get; init; }
 
     /// <summary>
+    /// Сырое <c>live_status</c> из ответа VK: <c>waiting</c>, <c>started</c>,
+    /// <c>finished</c>, <c>failed</c>. Пусто, если поля в ответе не было.
+    /// </summary>
+    public string? ProviderStatus { get; init; }
+
+    /// <summary>
     /// VK не всегда возвращает <c>is_private</c> для live-SDK объектов. Проверяйте
     /// <see cref="PrivacyKnown"/> прежде чем трактовать <see cref="IsPrivate"/> как readback.
     /// </summary>
