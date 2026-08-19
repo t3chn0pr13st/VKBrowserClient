@@ -399,6 +399,40 @@ public sealed class VkLiveServiceTests
         Assert.Equal(0, calls);
     }
 
+    [Theory]
+    // live=1 значит «объект — трансляция», а не «идёт сейчас»: фазу несёт live_status.
+    [InlineData("started", VkLiveStatusState.Live)]
+    [InlineData("waiting", VkLiveStatusState.Upcoming)]
+    [InlineData("finished", VkLiveStatusState.Ready)]
+    [InlineData("failed", VkLiveStatusState.Unknown)]
+    public async Task Live_phase_is_read_from_live_status_not_from_the_live_flag(
+        string liveStatus,
+        VkLiveStatusState expected)
+    {
+        var api = new RecordingHandler((_, _) => Task.FromResult(Json(
+            "{\"response\":{\"count\":1,\"items\":[{\"owner_id\":-123,\"id\":456,\"type\":\"live\",\"live\":1,"
+            + $"\"live_status\":\"{liveStatus}\"}}]}}}}")));
+        await using var client = Client(api);
+
+        var status = await client.Live.GetStatusAsync(-123, 456);
+
+        Assert.Equal(expected, status.State);
+        Assert.Equal(liveStatus, status.ProviderStatus);
+    }
+
+    [Fact]
+    public async Task A_response_without_live_status_keeps_the_previous_reading()
+    {
+        var api = new RecordingHandler((_, _) => Task.FromResult(Json(
+            """{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","live":1}]}}""")));
+        await using var client = Client(api);
+
+        var status = await client.Live.GetStatusAsync(-123, 456);
+
+        Assert.Equal(VkLiveStatusState.Live, status.State);
+        Assert.Null(status.ProviderStatus);
+    }
+
     [Fact]
     public async Task Video_privacy_goes_to_the_vk_video_app_on_its_own_host()
     {

@@ -547,15 +547,27 @@ public sealed class VkLiveService
         var live = Boolean(item, "live");
         var processing = Boolean(item, "processing") || Boolean(item, "converting");
         var type = String(item, "type");
-        var state = upcoming
-            ? VkLiveStatusState.Upcoming
-            : live
-                ? VkLiveStatusState.Live
-                : processing
-                    ? VkLiveStatusState.Processing
-                    : !string.IsNullOrWhiteSpace(type)
-                        ? VkLiveStatusState.Ready
-                        : VkLiveStatusState.Unknown;
+        // Флаг live говорит лишь то, что объект — трансляция, а не запись «живым
+        // сейчас». Фазу несёт live_status, и без него прошедший эфир годами
+        // оставался бы «в эфире». Неизвестное значение отдаём старой эвристике:
+        // так ответ без live_status разбирается ровно как раньше.
+        var liveStatus = String(item, "live_status");
+        var state = liveStatus switch
+        {
+            "started" => VkLiveStatusState.Live,
+            "waiting" or "upcoming" => VkLiveStatusState.Upcoming,
+            "finished" => processing ? VkLiveStatusState.Processing : VkLiveStatusState.Ready,
+            "failed" => VkLiveStatusState.Unknown,
+            _ => upcoming
+                ? VkLiveStatusState.Upcoming
+                : live
+                    ? VkLiveStatusState.Live
+                    : processing
+                        ? VkLiveStatusState.Processing
+                        : !string.IsNullOrWhiteSpace(type)
+                            ? VkLiveStatusState.Ready
+                            : VkLiveStatusState.Unknown,
+        };
 
         DateTimeOffset? scheduledAt = null;
         var unix = Int64(item, "live_start_time");
@@ -571,6 +583,7 @@ public sealed class VkLiveService
             OwnerId = ownerId,
             VideoId = videoId,
             State = state,
+            ProviderStatus = string.IsNullOrWhiteSpace(liveStatus) ? null : liveStatus,
             Title = String(item, "title"),
             Description = String(item, "description"),
             AccessKey = String(item, "access_key") ??
