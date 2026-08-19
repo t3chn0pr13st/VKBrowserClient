@@ -35,3 +35,27 @@ dotnet add <ваш-проект> package VkBrowserClient --version <version>
 
 Библиотека тянет за собой `Microsoft.Playwright`. Для интерактивного входа нужен Chromium;
 при необходимости установите его командой `pwsh <output>/playwright.ps1 install chromium`.
+
+## Выпуск пакета — локально, не через CI
+
+**GitHub Actions у аккаунта не выполняются: биллинг выключен и включать его не планируется.**
+Workflow здесь падает, не начав работу, поэтому пакет собирается и выпускается с машины
+разработчика:
+
+```bash
+dotnet test VKBrowserClient.slnx -c Release
+dotnet pack src/VkBrowserClient/VkBrowserClient.csproj -c Release -o artifacts -p:Version=X.Y.Z
+gh release create vX.Y.Z artifacts/*.nupkg artifacts/*.snupkg --generate-notes
+```
+
+Потребитель — KundaliniHub — берёт пакет не из фида, а из `.nupkg`, лежащего в его репозитории
+и запиннованного по версии и SHA-256. После выпуска там надо обновить пин:
+
+```bash
+cd ~/Projects/KundaliniHub
+./scripts/update-pinned-package.sh VkBrowserClient X.Y.Z ~/Projects/VKBrowserClient/artifacts
+```
+
+`dotnet pack` недетерминирован: пересборка той же версии даёт `.nupkg` с другим SHA-256.
+Копируйте в Hub файл из того же `artifacts/`, что выложили в релиз, иначе сборка Hub упадёт
+на несовпадении хеша.
