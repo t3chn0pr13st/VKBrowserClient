@@ -404,6 +404,9 @@ public sealed class VkLiveServiceTests
     [InlineData("started", VkLiveStatusState.Live)]
     [InlineData("waiting", VkLiveStatusState.Upcoming)]
     [InlineData("finished", VkLiveStatusState.Ready)]
+    [InlineData("postlive", VkLiveStatusState.Ready)]
+    // Новая фаза VK не должна снова читаться как «идёт сейчас».
+    [InlineData("something_new", VkLiveStatusState.Ready)]
     [InlineData("failed", VkLiveStatusState.Unknown)]
     public async Task Live_phase_is_read_from_live_status_not_from_the_live_flag(
         string liveStatus,

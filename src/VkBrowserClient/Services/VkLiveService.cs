@@ -556,8 +556,17 @@ public sealed class VkLiveService
         {
             "started" => VkLiveStatusState.Live,
             "waiting" or "upcoming" => VkLiveStatusState.Upcoming,
-            "finished" => processing ? VkLiveStatusState.Processing : VkLiveStatusState.Ready,
+            // postlive — эфир окончен и VK готовит запись; снято с живого ответа 20.08.2026.
+            "finished" or "postlive" => processing ? VkLiveStatusState.Processing : VkLiveStatusState.Ready,
             "failed" => VkLiveStatusState.Unknown,
+            // Значение есть, но незнакомое: флаг live тут не помощник — он говорит
+            // лишь «объект является трансляцией». Опираемся на остальные признаки,
+            // иначе любая новая фаза VK снова превратится в вечное «в эфире».
+            { Length: > 0 } => processing
+                ? VkLiveStatusState.Processing
+                : !string.IsNullOrWhiteSpace(type)
+                    ? VkLiveStatusState.Ready
+                    : VkLiveStatusState.Unknown,
             _ => upcoming
                 ? VkLiveStatusState.Upcoming
                 : live
