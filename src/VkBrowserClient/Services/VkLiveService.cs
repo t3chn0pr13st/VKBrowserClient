@@ -113,12 +113,23 @@ public sealed class VkLiveService
         CancellationToken cancellationToken = default)
     {
         ValidateReference(ownerId, videoId);
-        var parameters = new Dictionary<string, string> { ["video_id"] = videoId.ToString() };
+        // VK Видео завершает эфир из producer UI именно этим запросом под
+        // приложением VK Видео:
+        // POST https://api.vkvideo.ru/method/video.stopStreaming
+        //   group_id=<positive community id>&video_id=<id>&extended=0
+        // Не заменяйте CallVideoAsync на обычный CallAsync: messenger web-token
+        // на том же методе для live-SDK слота отвечает API error 10, тогда как
+        // producer UI использует video app token и успешно закрывает эфир.
+        var parameters = new Dictionary<string, string>
+        {
+            ["video_id"] = videoId.ToString(),
+            ["extended"] = "0",
+        };
         if (ownerId < 0)
             parameters["group_id"] = checked(-ownerId).ToString();
 
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
-        using var doc = await api.CallAsync("video.stopStreaming", parameters, cancellationToken)
+        using var doc = await api.CallVideoAsync("video.stopStreaming", parameters, cancellationToken)
             .ConfigureAwait(false);
         var response = ResponseOrThrow(doc, "video.stopStreaming");
         if (response.ValueKind != JsonValueKind.Object)
