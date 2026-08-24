@@ -117,9 +117,10 @@ public sealed class VkLiveService
         // приложением VK Видео:
         // POST https://api.vkvideo.ru/method/video.stopStreaming
         //   group_id=<positive community id>&video_id=<id>&extended=0
-        // Не заменяйте CallVideoAsync на обычный CallAsync: messenger web-token
-        // на том же методе для live-SDK слота отвечает API error 10, тогда как
-        // producer UI использует video app token и успешно закрывает эфир.
+        // Не заменяйте CallVideoAsync на обычный CallAsync: producer UI использует
+        // video app token. Для уже приостановленного live-SDK слота сам метод может
+        // вернуть API error 10, хотя последующая provider-сверка подтвердит Completed;
+        // вызывающий код не должен по этому результату пересоздавать или удалять слот.
         var parameters = new Dictionary<string, string>
         {
             ["video_id"] = videoId.ToString(),
