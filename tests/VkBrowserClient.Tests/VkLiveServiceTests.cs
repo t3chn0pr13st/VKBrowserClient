@@ -336,11 +336,14 @@ public sealed class VkLiveServiceTests
     [Fact]
     public async Task Community_stop_and_delete_map_owner_semantics()
     {
-        var calls = new List<ApiCall>();
+        var calls = new List<(string Url, ApiCall Call)>();
         var api = new RecordingHandler(async (request, cancellationToken) =>
         {
+            var url = request.RequestUri!.ToString();
             var call = await ApiCall.FromAsync(request, cancellationToken);
-            calls.Add(call);
+            calls.Add((url, call));
+            if (url.Contains("act=web_token", StringComparison.Ordinal))
+                return Json("""{"type":"okay","data":{"access_token":"video-app-token","expires":1800,"user_id":42}}""");
             return call.Method switch
             {
                 "video.stopStreaming" => Json("""{"response":{"unique_viewers":321}}"""),
@@ -355,11 +358,15 @@ public sealed class VkLiveServiceTests
 
         Assert.Equal(321, stopped.UniqueViewers);
         Assert.True(deleted);
-        var stop = calls.Single(x => x.Method == "video.stopStreaming").Form;
+        var stopRequest = calls.Single(x => x.Call.Method == "video.stopStreaming");
+        Assert.StartsWith("https://api.vkvideo.ru/method/video.stopStreaming?", stopRequest.Url, StringComparison.Ordinal);
+        var stop = stopRequest.Call.Form;
         Assert.Equal("123", stop["group_id"]);
         Assert.Equal("456", stop["video_id"]);
+        Assert.Equal("0", stop["extended"]);
+        Assert.Equal("video-app-token", stop["access_token"]);
         Assert.DoesNotContain("owner_id", stop.Keys);
-        var delete = calls.Single(x => x.Method == "video.delete").Form;
+        var delete = calls.Single(x => x.Call.Method == "video.delete").Call.Form;
         Assert.Equal("-123", delete["owner_id"]);
         Assert.Equal("456", delete["video_id"]);
     }
