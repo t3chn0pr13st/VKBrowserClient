@@ -267,7 +267,7 @@ public sealed class VkLiveServiceTests
         var responses = new Queue<HttpResponseMessage>(
         [
             Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","upcoming":1,"live":1,"title":"Soon","live_start_time":1893456000}]}}"""),
-            Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","live":1,"spectators":17,"player":"https://vk.test/player"}]}}"""),
+            Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","live":1,"spectators":17,"views":42,"player":"https://vk.test/player"}]}}"""),
             Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","processing":1}]}}"""),
             Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","is_private":1,"can_edit":1,"can_delete":true,"access_key":"new-key","image":[{"url":"https://cdn/cover.jpg","width":1280,"height":720}] }]}}"""),
         ]);
@@ -288,6 +288,8 @@ public sealed class VkLiveServiceTests
         Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1893456000), upcoming.ScheduledStartAt);
         Assert.Equal(VkLiveStatusState.Live, live.State);
         Assert.Equal(17, live.Spectators);
+        Assert.Equal(17, live.CurrentViewers);
+        Assert.Equal(42, live.TotalViews);
         Assert.Equal("https://vk.test/player", live.PlayerUrl);
         Assert.Equal(VkLiveStatusState.Processing, processing.State);
         Assert.Equal(VkLiveStatusState.Ready, ready.State);
@@ -303,6 +305,27 @@ public sealed class VkLiveServiceTests
             Assert.Equal("-123_456_private-key", call.Form["videos"]);
             Assert.Equal("1", call.Form["count"]);
         });
+    }
+
+    [Fact]
+    public async Task Status_distinguishes_missing_audience_counters_from_confirmed_zero()
+    {
+        var responses = new Queue<HttpResponseMessage>(
+        [
+            Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","live":1}]}}"""),
+            Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456,"type":"live","live":1,"spectators":0,"views":0}]}}"""),
+        ]);
+        var api = new RecordingHandler((_, _) => Task.FromResult(responses.Dequeue()));
+        await using var client = Client(api);
+
+        var missing = await client.Live.GetStatusAsync(-123, 456, cancellationToken: default);
+        var zero = await client.Live.GetStatusAsync(-123, 456, cancellationToken: default);
+
+        Assert.Null(missing.CurrentViewers);
+        Assert.Null(missing.TotalViews);
+        Assert.Equal(0, missing.Spectators);
+        Assert.Equal(0, zero.CurrentViewers);
+        Assert.Equal(0, zero.TotalViews);
     }
 
     [Fact]

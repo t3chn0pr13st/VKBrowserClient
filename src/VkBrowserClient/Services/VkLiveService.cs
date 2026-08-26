@@ -599,6 +599,8 @@ public sealed class VkLiveService
         }
 
         var privacyKnown = HasBoolean(item, "is_private");
+        var currentViewers = NullableInt64(item, "spectators");
+        var totalViews = NullableInt64(item, "views");
         return new VkLiveStatus
         {
             OwnerId = ownerId,
@@ -615,7 +617,9 @@ public sealed class VkLiveService
             PrivacyKnown = privacyKnown,
             CanEdit = Boolean(item, "can_edit"),
             CanDelete = Boolean(item, "can_delete"),
-            Spectators = Math.Max(0, Int64(item, "spectators")),
+            CurrentViewers = currentViewers is { } current ? Math.Max(0, current) : null,
+            TotalViews = totalViews is { } total ? Math.Max(0, total) : null,
+            Spectators = Math.Max(0, currentViewers ?? 0),
             ScheduledStartAt = scheduledAt,
             VideoType = type,
             Images = ParseImages(item),

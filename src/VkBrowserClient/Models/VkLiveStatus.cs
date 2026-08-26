@@ -62,6 +62,22 @@ public sealed class VkLiveStatus
     public bool PrivacyKnown { get; init; }
     public bool CanEdit { get; init; }
     public bool CanDelete { get; init; }
+    /// <summary>
+    /// Текущее число одновременных зрителей. <c>null</c> означает, что VK не
+    /// вернул поле <c>spectators</c>; это отличается от подтверждённого нуля.
+    /// </summary>
+    public long? CurrentViewers { get; init; }
+
+    /// <summary>
+    /// Накопленное число просмотров объекта из поля <c>views</c>. Это счётчик
+    /// просмотров, а не гарантированно уникальные зрители.
+    /// </summary>
+    public long? TotalViews { get; init; }
+
+    /// <summary>
+    /// Совместимый алиас старого API. Когда <c>spectators</c> отсутствует,
+    /// возвращает ноль; новый код должен использовать <see cref="CurrentViewers"/>.
+    /// </summary>
     public long Spectators { get; init; }
     public DateTimeOffset? ScheduledStartAt { get; init; }
     public string? VideoType { get; init; }
