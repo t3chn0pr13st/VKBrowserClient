@@ -28,6 +28,9 @@ public sealed class VkLiveSdkSettings
 
     /// <summary>Заголовок трансляции, как его разобрал VK.</summary>
     public required string Title { get; init; }
+
+    /// <summary>Сохраняет ли VK запись эфира — фактическое значение на слоте.</summary>
+    public required bool RecordStream { get; init; }
 }
 
 /// <summary>
@@ -45,9 +48,12 @@ public sealed class VkLiveSdkPatchOptions
     /// <summary>Новое описание; <see langword="null"/> сохраняет текущее.</summary>
     public string? Description { get; init; }
 
+    /// <summary>Включить или выключить сохранение записи; <see langword="null"/> сохраняет текущее.</summary>
+    public bool? RecordStream { get; init; }
+
     internal void Validate()
     {
-        if (Permission is null && Title is null && Description is null)
+        if (Permission is null && Title is null && Description is null && RecordStream is null)
             throw new ArgumentException("Нужно указать хотя бы одно изменение live-slot.");
         if (Title is not null && string.IsNullOrWhiteSpace(Title))
             throw new ArgumentException("Title не может быть пустым.", nameof(Title));

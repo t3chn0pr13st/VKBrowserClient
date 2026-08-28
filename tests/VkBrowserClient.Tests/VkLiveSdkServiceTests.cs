@@ -167,7 +167,7 @@ public sealed class VkLiveSdkServiceTests
             sdk: Handler(async (request, ct) =>
             {
                 call = await SdkCall.FromAsync(request, ct);
-                return Json("""{"data":{"streamSlot":{"slotUrl":"sl_1","vkPermission":"public","title":"Эфир "}}}""");
+                return Json("""{"data":{"streamSlot":{"slotUrl":"sl_1","vkPermission":"public","title":"Эфир ","isShouldRecord":true}}}""");
             }));
 
         var settings = await client.LiveSdk.GetStreamSettingsAsync("channel1", "sl_1");
@@ -177,6 +177,7 @@ public sealed class VkLiveSdkServiceTests
         Assert.Equal(VkLiveSdkPermission.Public, settings.Permission);
         // VK возвращает заголовок с хвостовым пробелом — он не должен утекать наружу.
         Assert.Equal("Эфир", settings.Title);
+        Assert.True(settings.RecordStream);
     }
 
     [Fact]
@@ -185,12 +186,13 @@ public sealed class VkLiveSdkServiceTests
         await using var client = Client(
             SessionWithSdkToken(),
             sdk: Handler((_, _) => Task.FromResult(
-                Json("""{"data":{"vkPermission":"by_link","title":"Прямо в корне"}}"""))));
+                Json("""{"data":{"vkPermission":"by_link","title":"Прямо в корне","isShouldRecord":false}}"""))));
 
         var settings = await client.LiveSdk.GetStreamSettingsAsync("channel1", "sl_1");
 
         Assert.Equal(VkLiveSdkPermission.ByLink, settings.Permission);
         Assert.Equal("Прямо в корне", settings.Title);
+        Assert.False(settings.RecordStream);
     }
 
     [Fact]
@@ -199,7 +201,7 @@ public sealed class VkLiveSdkServiceTests
         await using var client = Client(
             SessionWithSdkToken(),
             sdk: Handler((_, _) => Task.FromResult(
-                Json("""{"data":{"streamSlot":{"vkPermission":"something_new"}}}"""))));
+                Json("""{"data":{"streamSlot":{"vkPermission":"something_new","isShouldRecord":true}}}"""))));
 
         var error = await Assert.ThrowsAsync<VkClientException>(
             () => client.LiveSdk.GetStreamPermissionAsync("channel1", "sl_1"));
@@ -251,17 +253,19 @@ public sealed class VkLiveSdkServiceTests
             Permission = after,
             Title = "Новый заголовок",
             Description = "Новое описание",
+            RecordStream = false,
         });
 
         Assert.Equal(3, calls);
         Assert.Equal(VkLiveSdkPermission.Public == after ? VkLiveSdkPermission.Public : VkLiveSdkPermission.ByLink, actual.Permission);
+        Assert.True(actual.RecordStream);
         Assert.Equal($"/v1/channel/channel35338325/manage/vk/stream/sl_163026", put!.Path);
         Assert.Equal("channel35338325", put.Form["channel_url"]);
         Assert.Equal("sl_163026", put.Form["slot_url"]);
         Assert.Equal(expectedPermission, put.Form["vk_permissions"]);
         Assert.Equal("42", put.Form["category_id"]);
         Assert.Equal("false", put.Form["is_infinite"]);
-        Assert.Equal("true", put.Form["is_should_record"]);
+        Assert.Equal("false", put.Form["is_should_record"]);
         Assert.Equal("false", put.Form["is_playback_disabled"]);
         Assert.Equal("false", put.Form["is_vk_wallpost_create"]);
         Assert.Equal("https://example.test/info", put.Form["vk_additional_url"]);
@@ -294,6 +298,24 @@ public sealed class VkLiveSdkServiceTests
         });
 
         Assert.Equal(VkLiveSdkPermission.Public, actual.Permission);
+    }
+
+    [Fact]
+    public async Task Returns_the_actual_readback_when_vk_does_not_enable_recording()
+    {
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler((request, _) => Task.FromResult(
+                request.Method == HttpMethod.Put
+                    ? Json("""{"data":{}}""")
+                    : Json(FullSettings(VkLiveSdkPermission.Public, recordStream: false)))));
+
+        var actual = await client.LiveSdk.UpdateStreamAsync("channel1", "sl_1", new VkLiveSdkPatchOptions
+        {
+            RecordStream = true,
+        });
+
+        Assert.False(actual.RecordStream);
     }
 
     [Fact]
@@ -337,7 +359,7 @@ public sealed class VkLiveSdkServiceTests
             sdk: Handler((request, _) =>
             {
                 putCalled |= request.Method == HttpMethod.Put;
-                return Task.FromResult(Json("""{"data":{"streamSlot":{"vkPermission":"public","title":"Эфир"}}}"""));
+                return Task.FromResult(Json("""{"data":{"streamSlot":{"vkPermission":"public","title":"Эфир","isShouldRecord":true}}}"""));
             }));
 
         var error = await Assert.ThrowsAsync<VkClientException>(() =>
@@ -367,20 +389,22 @@ public sealed class VkLiveSdkServiceTests
             }));
     }
 
-    private static string FullSettings(VkLiveSdkPermission permission)
+    private static string FullSettings(VkLiveSdkPermission permission, bool recordStream = true)
     {
         var rawPermission = permission == VkLiveSdkPermission.ByLink ? "by_link" : "public";
         return """
             {"data":{"streamSlot":{
               "slotUrl":"sl_163026","vkPermission":"$PERMISSION","title":"Текущий заголовок",
-              "categoryId":42,"isInfinite":false,"isShouldRecord":true,
+              "categoryId":42,"isInfinite":false,"isShouldRecord":$RECORD_STREAM,
               "isPlaybackDisabled":false,"isVkWallpostCreate":false,
               "vkAdditionalUrl":"https://example.test/info","vkGroupId":59868532,
               "useStreamPreviewMode":false,"isChatDisabled":false,"isVkNotifyFollowers":true,
               "vkDescription":"Текущее описание","name":"Академия",
               "plannedAt":"2026-08-14T10:00:00Z","plannedEndAt":"2026-08-14T12:00:00Z"
             }}}
-            """.Replace("$PERMISSION", rawPermission, StringComparison.Ordinal);
+            """
+            .Replace("$PERMISSION", rawPermission, StringComparison.Ordinal)
+            .Replace("$RECORD_STREAM", recordStream ? "true" : "false", StringComparison.Ordinal);
     }
 
     private static string RealManageSettings(VkLiveSdkPermission permission)

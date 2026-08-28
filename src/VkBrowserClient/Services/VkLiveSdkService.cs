@@ -131,6 +131,7 @@ public sealed class VkLiveSdkService
         {
             Permission = ParsePermission(raw),
             Title = String(slot!.Value, "title")?.Trim() ?? string.Empty,
+            RecordStream = RequiredBoolValue(slot.Value, "isShouldRecord", "is_should_record"),
         };
         return new StreamSettingsSnapshot(settings, data.RootElement.Clone(), slot.Value.Clone());
     }
@@ -163,7 +164,7 @@ public sealed class VkLiveSdkService
                               ?? NestedScalar(slot, "category", "id")
                               ?? string.Empty,
             ["is_infinite"] = RequiredBool(slot, "isInfinite", "is_infinite"),
-            ["is_should_record"] = RequiredBool(slot, "isShouldRecord", "is_should_record"),
+            ["is_should_record"] = Bool(patch.RecordStream ?? current.Settings.RecordStream),
             ["is_playback_disabled"] = RequiredBool(slot, "isPlaybackDisabled", "is_playback_disabled"),
             ["is_vk_wallpost_create"] = RequiredBool(slot, "isVkWallpostCreate", "is_vk_wallpost_create"),
             ["vk_additional_url"] = Scalar(slot, "vkAdditionalUrl", "vk_additional_url") ?? string.Empty,
@@ -194,13 +195,16 @@ public sealed class VkLiveSdkService
         return Math.Abs(value).ToString();
     }
 
-    private static string RequiredBool(JsonElement element, params string[] names)
+    private static string RequiredBool(JsonElement element, params string[] names) =>
+        Bool(RequiredBoolValue(element, names));
+
+    private static bool RequiredBoolValue(JsonElement element, params string[] names)
     {
         foreach (var name in names)
         {
             if (!element.TryGetProperty(name, out var value)) continue;
-            if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return Bool(value.GetBoolean());
-            if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var parsed)) return Bool(parsed);
+            if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return value.GetBoolean();
+            if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out var parsed)) return parsed;
         }
         throw MissingUpdateField(names[0], element);
     }
