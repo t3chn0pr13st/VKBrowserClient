@@ -153,7 +153,12 @@ public sealed class VkWebApi : IDisposable
         var file = new StreamContent(sourceStream, bufferSize: 128 * 1024);
         file.Headers.ContentType = new MediaTypeHeaderValue(source.ContentType);
         file.Headers.ContentLength = source.Length;
-        content.Add(file, fieldName, source.FileName);
+        // VK upload hosts can return an empty photo token for otherwise valid images when
+        // multipart Content-Disposition contains a Unicode filename/filename*. Keep the
+        // original name on VkUploadSource, but use an ASCII transport name for the signed
+        // upload request. The extension is preserved so provider-side type detection keeps
+        // working even on upload hosts that do not trust Content-Type alone.
+        content.Add(file, fieldName, MultipartFileName(source.FileName));
 
         using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl) { Content = content };
         using var response = await _uploadHttp.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -169,6 +174,21 @@ public sealed class VkWebApi : IDisposable
             throw new VkClientException(
                 $"Сервер загрузки вернул не-JSON ответ: {VkSafeErrorDetails.Describe(body)}");
         }
+    }
+
+    private static string MultipartFileName(string fileName)
+    {
+        if (fileName.All(static c => c is >= ' ' and <= '~' && c is not '"' and not '\\'))
+            return fileName;
+
+        var extension = Path.GetExtension(fileName);
+        if (extension.Length is < 2 or > 11
+            || extension.Any(static c => c != '.' && !char.IsAsciiLetterOrDigit(c)))
+        {
+            extension = string.Empty;
+        }
+
+        return $"upload{extension.ToLowerInvariant()}";
     }
 
     /// <summary>Загрузить изображение на сервер фото VK (URL из photos.get*UploadServer). Поле формы — «photo».</summary>

@@ -107,6 +107,41 @@ public sealed class PublicationApiTests
     }
 
     [Fact]
+    public async Task Multipart_upload_uses_ascii_transport_filename_for_unicode_source_name()
+    {
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            return call.Method switch
+            {
+                "photos.getWallUploadServer" => Json("""{"response":{"upload_url":"https://upload.test/photo"}}"""),
+                "photos.saveWallPhoto" => Json("""{"response":[{"owner_id":-123,"id":10}]}"""),
+                "wall.post" => Json("""{"response":{"post_id":77}}"""),
+                _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
+            };
+        });
+        string? transportFileName = null;
+        string? transportFileNameStar = null;
+        var uploads = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+            var part = Assert.Single(multipart);
+            transportFileName = part.Headers.ContentDisposition?.FileName;
+            transportFileNameStar = part.Headers.ContentDisposition?.FileNameStar;
+            await request.Content.CopyToAsync(Stream.Null, cancellationToken);
+            return Json("""{"server":1,"photo":"photo-token","hash":"hash"}""");
+        });
+        var attachment = VkAttachmentSource.Photo(
+            Source("День важнейших медитаций.jpg", "image/jpeg", 32_768, () => { }));
+
+        await using var client = Client(api, uploads);
+        await client.Wall.PostToCommunityAsync(123, "Caption", [attachment]);
+
+        Assert.Equal("upload.jpg", transportFileName);
+        Assert.Equal("upload.jpg", transportFileNameStar);
+    }
+
+    [Fact]
     public async Task Clip_stream_publish_edit_and_processing_use_stable_provider_identity()
     {
         var calls = new List<ApiCall>();
