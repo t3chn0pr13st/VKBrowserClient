@@ -52,6 +52,46 @@ public sealed class VkGroupsServiceTests
     }
 
     [Fact]
+    public async Task Resolves_community_screen_name_to_canonical_numeric_id()
+    {
+        IReadOnlyDictionary<string, string>? call = null;
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler((_, _) => throw new InvalidOperationException("live-SDK здесь ни при чём.")),
+            api: Handler(async (request, ct) =>
+            {
+                call = await FormAsync(request, ct);
+                return Json("""
+                    {"response":{"groups":[
+                      {"id":219256880,"name":"Йога-студия Аура","can_post":1,"is_admin":true,"admin_level":3}
+                    ]}}
+                    """);
+            }));
+
+        var permissions = await client.Groups.GetPermissionsAsync(" academyyoga_pr ");
+
+        Assert.NotNull(call);
+        Assert.Equal("academyyoga_pr", call["group_ids"]);
+        Assert.Equal(219256880, permissions.GroupId);
+        Assert.Equal("Йога-студия Аура", permissions.Name);
+        Assert.True(permissions.CanPost);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("https://vk.com/academyyoga")]
+    [InlineData("аура")]
+    public async Task Rejects_invalid_community_screen_names(string screenName)
+    {
+        await using var client = Client(
+            SessionWithSdkToken(),
+            sdk: Handler((_, _) => throw new InvalidOperationException("live-SDK здесь ни при чём.")),
+            api: Handler((_, _) => throw new InvalidOperationException("Запроса быть не должно.")));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Groups.GetPermissionsAsync(screenName));
+    }
+
+    [Fact]
     public async Task Refuses_an_empty_result_rather_than_reporting_no_rights()
     {
         await using var client = Client(
