@@ -174,6 +174,8 @@ public sealed class PublicationApiTests
         {
             Assert.Equal("-123", get.Form["owner_id"]);
             Assert.Equal("1", get.Form["extended"]);
+            Assert.Equal("-123_99", get.Form["videos"]);
+            Assert.DoesNotContain("link-key", get.Form["videos"]);
         });
     }
 

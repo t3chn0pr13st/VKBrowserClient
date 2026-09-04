@@ -241,9 +241,11 @@ public sealed class VkVideosService
         CancellationToken cancellationToken = default)
     {
         ValidateReference(ownerId, videoId);
-        var reference = string.IsNullOrWhiteSpace(accessKey)
-            ? $"{ownerId}_{videoId}"
-            : $"{ownerId}_{videoId}_{accessKey}";
+        // Для управляющего токена запрашиваем объект как владелец, без access key.
+        // Именно такой запрос VK Video использует в редакторе и только в нём
+        // возвращает lifecycle-поля наподобие is_draft. Переданный ключ остаётся
+        // fallback-значением результата и не теряется.
+        var reference = $"{ownerId}_{videoId}";
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
         // Только API приложения VK Видео возвращает полный lifecycle VOD,
         // включая is_draft. Обычный web API может скрыть это поле и тем самым
