@@ -245,10 +245,15 @@ public sealed class VkVideosService
             ? $"{ownerId}_{videoId}"
             : $"{ownerId}_{videoId}_{accessKey}";
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
-        using var document = await api.CallAsync("video.get", new Dictionary<string, string>
+        // Только API приложения VK Видео возвращает полный lifecycle VOD,
+        // включая is_draft. Обычный web API может скрыть это поле и тем самым
+        // ошибочно представить неопубликованный черновик готовым видео.
+        using var document = await api.CallVideoAsync("video.get", new Dictionary<string, string>
         {
+            ["owner_id"] = ownerId.ToString(),
             ["videos"] = reference,
             ["count"] = "1",
+            ["extended"] = "1",
         }, cancellationToken).ConfigureAwait(false);
         var response = VkWebApi.GetResponseOrThrow(document, "video.get");
         var item = response.TryGetProperty("items", out var items) &&

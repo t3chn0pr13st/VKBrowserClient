@@ -168,6 +168,13 @@ public sealed class PublicationApiTests
         Assert.Equal("by_link", publish["privacy_video"]);
         Assert.Equal("0", publish["add_to_wall"]);
         Assert.DoesNotContain(calls, x => x.Method == "wall.post");
+        var lifecycleGets = calls.Where(x => x.Method == "video.get" && x.Form.ContainsKey("extended")).ToArray();
+        Assert.Equal(2, lifecycleGets.Length);
+        Assert.All(lifecycleGets, get =>
+        {
+            Assert.Equal("-123", get.Form["owner_id"]);
+            Assert.Equal("1", get.Form["extended"]);
+        });
     }
 
     [Fact]
