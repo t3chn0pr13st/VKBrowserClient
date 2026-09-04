@@ -133,6 +133,71 @@ public sealed class PublicationApiTests
     }
 
     [Fact]
+    public async Task Long_video_publishes_explicit_draft_link_only_without_wall_post()
+    {
+        var calls = new List<ApiCall>();
+        var getCount = 0;
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            calls.Add(call);
+            return call.Method switch
+            {
+                "video.edit" => Json("""{"response":{"success":1,"access_key":"edited-link-key"}}"""),
+                "video.publish" => Json("""{"response":{"video":{"owner_id":-123,"id":99,"access_key":"published-link-key"}}}"""),
+                "video.get" when getCount++ == 0 => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":1}]}}"""),
+                "video.get" when getCount == 2 => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"is_draft":1,"processing":1,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"is_draft":0,"processing":0,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
+            };
+        });
+
+        await using var client = Client(api, new RecordingHandler((_, _) =>
+            throw new InvalidOperationException("Upload was not expected.")));
+        var result = await client.Videos.CompleteAsync(UploadedSession(), LinkOnlyOptions());
+
+        Assert.Equal(VkVideoProcessingState.Ready, result.State);
+        Assert.False(result.IsDraft);
+        Assert.True(result.ConfirmsPrivacy(VkLivePrivacy.ByLink));
+        Assert.Equal("published-link-key", result.AccessKey);
+        var publish = calls.Single(x => x.Method == "video.publish").Form;
+        Assert.Equal("-123", publish["owner_id"]);
+        Assert.Equal("99", publish["video_id"]);
+        Assert.Equal("Class", publish["title"]);
+        Assert.Equal("Paid recording", publish["description"]);
+        Assert.Equal("by_link", publish["privacy_video"]);
+        Assert.Equal("0", publish["add_to_wall"]);
+        Assert.DoesNotContain(calls, x => x.Method == "wall.post");
+    }
+
+    [Fact]
+    public async Task Long_video_does_not_republish_after_uncertain_publish_result()
+    {
+        var calls = new List<ApiCall>();
+        var getCount = 0;
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            calls.Add(call);
+            return call.Method switch
+            {
+                "video.edit" => Json("""{"response":{"success":1,"access_key":"edited-link-key"}}"""),
+                "video.get" when getCount++ == 0 => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":0}]}}"""),
+                "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"is_draft":0,"processing":0,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
+            };
+        });
+
+        await using var client = Client(api, new RecordingHandler((_, _) =>
+            throw new InvalidOperationException("Upload was not expected.")));
+        var result = await client.Videos.CompleteAsync(UploadedSession(), LinkOnlyOptions());
+
+        Assert.Equal(VkVideoProcessingState.Ready, result.State);
+        Assert.False(result.IsDraft);
+        Assert.DoesNotContain(calls, x => x.Method == "video.publish");
+    }
+
+    [Fact]
     public async Task Long_video_accepts_unknown_privacy_only_while_processing()
     {
         var api = new RecordingHandler(async (request, cancellationToken) =>

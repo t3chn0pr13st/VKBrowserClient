@@ -60,6 +60,12 @@ public sealed class VkVideoResult
     public string? PlayerUrl { get; init; }
 
     /// <summary>
+    /// Признак неопубликованного черновика, если VK вернул <c>is_draft</c>.
+    /// Черновик нельзя считать готовой записью даже при наличии player URL.
+    /// </summary>
+    public bool? IsDraft { get; init; }
+
+    /// <summary>
     /// Приватность, подтверждённая readback-запросом. <see langword="null"/> означает,
     /// что VK не вернул поле; это не считается публичным доступом и не должно
     /// разблокировать публикацию записи.

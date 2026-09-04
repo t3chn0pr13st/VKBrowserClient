@@ -110,9 +110,10 @@ public sealed class VkVideosService
     }
 
     /// <summary>
-    /// Применить приватность через приложение VK Видео. Пока файл обрабатывается, VK
-    /// может принять edit, но не вернуть privacy_view: это промежуточное состояние,
-    /// а не ошибка. Готовая запись без подтверждённой приватности отклоняется.
+    /// Применить приватность и опубликовать черновик через приложение VK Видео.
+    /// Пока файл обрабатывается, VK может принять edit, но не вернуть privacy_view:
+    /// это промежуточное состояние, а не ошибка. Готовая запись без подтверждённой
+    /// приватности отклоняется. Публикация всегда выполняется без записи на стене.
     /// </summary>
     public async Task<VkVideoResult> CompleteAsync(
         VkVideoUploadSession session,
@@ -135,12 +136,35 @@ public sealed class VkVideosService
             throw new VkClientException(
                 $"VK отклонил privacy_view={VkLiveStartOptions.Privacy(options.ViewPrivacy)} для видео {session.Reference}.");
 
+        var accessKey = privacy.AccessKey ?? session.AccessKey;
         var status = await GetStatusAsync(
                 session.OwnerId,
                 session.VideoId,
-                privacy.AccessKey ?? session.AccessKey,
+                accessKey,
                 cancellationToken)
             .ConfigureAwait(false);
+
+        // video.save создаёт черновик. Официальный интерфейс VK Видео завершает
+        // загрузку отдельным video.publish; одного video.edit недостаточно.
+        // Сначала читаем is_draft, чтобы повтор после неопределённого ответа не
+        // публиковал уже опубликованный объект вслепую.
+        if (status.IsDraft == true)
+        {
+            accessKey = await PublishDraftAsync(
+                    session.OwnerId,
+                    session.VideoId,
+                    options,
+                    accessKey,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            status = await GetStatusAsync(
+                    session.OwnerId,
+                    session.VideoId,
+                    accessKey,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         var confirmedPrivacy = privacy.Privacy ?? status.PrivacyView;
         if (confirmedPrivacy is not null &&
             !string.Equals(confirmedPrivacy, VkLiveStartOptions.Privacy(options.ViewPrivacy), StringComparison.OrdinalIgnoreCase))
@@ -163,7 +187,50 @@ public sealed class VkVideosService
             State = status.State,
             PlayerUrl = status.PlayerUrl,
             PrivacyView = confirmedPrivacy,
+            IsDraft = status.IsDraft,
         };
+    }
+
+    /// <summary>
+    /// Опубликовать созданный <c>video.save</c> черновик без публикации на стене.
+    /// Метод намеренно вызывается только после readback <c>is_draft=true</c>.
+    /// </summary>
+    private async Task<string?> PublishDraftAsync(
+        long ownerId,
+        long videoId,
+        VkVideoUploadOptions options,
+        string? accessKey,
+        CancellationToken cancellationToken)
+    {
+        var parameters = new Dictionary<string, string>
+        {
+            ["owner_id"] = ownerId.ToString(),
+            ["video_id"] = videoId.ToString(),
+            ["privacy_video"] = VkLiveStartOptions.Privacy(options.ViewPrivacy),
+            ["add_to_wall"] = "0",
+        };
+        if (!string.IsNullOrWhiteSpace(options.Name))
+            parameters["title"] = options.Name;
+        if (options.Description is not null)
+            parameters["description"] = options.Description;
+
+        var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        using var document = await api.CallVideoAsync("video.publish", parameters, cancellationToken)
+            .ConfigureAwait(false);
+        var response = VkWebApi.GetResponseOrThrow(document, "video.publish");
+        var video = response.TryGetProperty("video", out var value) && value.ValueKind == JsonValueKind.Object
+            ? value
+            : default;
+        var publishedId = Int64(video, "id");
+        var publishedOwnerId = Int64(video, "owner_id");
+        if (publishedId != videoId || publishedOwnerId != 0 && publishedOwnerId != ownerId)
+        {
+            throw new VkClientException(
+                $"video.publish не подтвердил публикацию ожидаемого видео video{ownerId}_{videoId}.");
+        }
+
+        await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+        return String(video, "access_key") ?? accessKey;
     }
 
     /// <summary>Проверить обработку записи по стабильному provider id.</summary>
@@ -202,7 +269,8 @@ public sealed class VkVideosService
             };
         }
 
-        var processing = Boolean(item, "processing") || Boolean(item, "converting");
+        var isDraft = NullableBoolean(item, "is_draft");
+        var processing = Boolean(item, "processing") || Boolean(item, "converting") || isDraft == true;
         return new VkVideoResult
         {
             OwnerId = ownerId,
@@ -211,6 +279,7 @@ public sealed class VkVideosService
             State = processing ? VkVideoProcessingState.Processing : VkVideoProcessingState.Ready,
             PlayerUrl = String(item, "player"),
             PrivacyView = ReadPrivacyView(item),
+            IsDraft = isDraft,
         };
     }
 
@@ -267,6 +336,19 @@ public sealed class VkVideosService
             return false;
         return value.ValueKind == JsonValueKind.True ||
                value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var numeric) && numeric != 0;
+    }
+
+    private static bool? NullableBoolean(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out var value))
+            return null;
+        if (value.ValueKind == JsonValueKind.True)
+            return true;
+        if (value.ValueKind == JsonValueKind.False)
+            return false;
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var numeric)
+            ? numeric != 0
+            : null;
     }
 
     private static string? ReadPrivacyView(JsonElement item)
