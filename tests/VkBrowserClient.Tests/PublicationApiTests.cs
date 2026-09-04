@@ -85,6 +85,7 @@ public sealed class PublicationApiTests
                 "video.save" => Json("""{"response":{"upload_url":"https://upload.test/vod?signature=secret","owner_id":-123,"video_id":99,"access_key":"watch-secret"}}"""),
                 "video.edit" => Json("""{"response":{"success":1}}"""),
                 "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"privacy_view":"by_link","processing":0,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                "video.getVideoForEdit" => Json("""{"response":{"item":{}}}"""),
                 _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
             };
         });
@@ -137,6 +138,7 @@ public sealed class PublicationApiTests
     {
         var calls = new List<ApiCall>();
         var getCount = 0;
+        var draftCount = 0;
         var api = new RecordingHandler(async (request, cancellationToken) =>
         {
             var call = await ApiCall.FromAsync(request, cancellationToken);
@@ -148,6 +150,8 @@ public sealed class PublicationApiTests
                 "video.get" when getCount++ == 0 => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":1}]}}"""),
                 "video.get" when getCount == 2 => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"is_draft":1,"processing":1,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
                 "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"is_draft":0,"processing":0,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                "video.getVideoForEdit" when draftCount++ == 0 => Json("""{"response":{"item":{"is_draft":1}}}"""),
+                "video.getVideoForEdit" => Json("""{"response":{"item":{}}}"""),
                 _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
             };
         });
@@ -193,6 +197,7 @@ public sealed class PublicationApiTests
                 "video.edit" => Json("""{"response":{"success":1,"access_key":"edited-link-key"}}"""),
                 "video.get" when getCount++ == 0 => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":0}]}}"""),
                 "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"is_draft":0,"processing":0,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                "video.getVideoForEdit" => Json("""{"response":{"item":{}}}"""),
                 _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
             };
         });
@@ -216,6 +221,7 @@ public sealed class PublicationApiTests
             {
                 "video.edit" => Json("""{"response":{"success":1}}"""),
                 "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":1,"can_edit_privacy":1,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                "video.getVideoForEdit" => Json("""{"response":{"item":{}}}"""),
                 _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
             };
         });
@@ -261,6 +267,7 @@ public sealed class PublicationApiTests
             {
                 "video.edit" => Json("""{"response":{"success":1,"access_key":"edited-link-key"}}"""),
                 "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":0,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                "video.getVideoForEdit" => Json("""{"response":{"item":{}}}"""),
                 _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
             };
         });

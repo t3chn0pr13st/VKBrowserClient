@@ -143,6 +143,24 @@ public sealed class VkVideosService
                 accessKey,
                 cancellationToken)
             .ConfigureAwait(false);
+        var confirmedPrivacy = privacy.Privacy ?? status.PrivacyView;
+        if (confirmedPrivacy is not null &&
+            !string.Equals(confirmedPrivacy, VkLiveStartOptions.Privacy(options.ViewPrivacy), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new VkClientException(
+                $"VK вернул privacy_view={confirmedPrivacy} вместо {VkLiveStartOptions.Privacy(options.ViewPrivacy)} для видео {session.Reference}.");
+        }
+        if (status.State == VkVideoProcessingState.Ready && confirmedPrivacy is null)
+        {
+            throw new VkClientException(
+                $"VK принял видео {session.Reference}, но не подтвердил privacy_view={VkLiveStartOptions.Privacy(options.ViewPrivacy)} после обработки.");
+        }
+
+        status = WithDraftState(status, await GetDraftStateAsync(
+                session.OwnerId,
+                session.VideoId,
+                cancellationToken)
+            .ConfigureAwait(false));
 
         // video.save создаёт черновик. Официальный интерфейс VK Видео завершает
         // загрузку отдельным video.publish; одного video.edit недостаточно.
@@ -163,14 +181,11 @@ public sealed class VkVideosService
                     accessKey,
                     cancellationToken)
                 .ConfigureAwait(false);
-        }
-
-        var confirmedPrivacy = privacy.Privacy ?? status.PrivacyView;
-        if (confirmedPrivacy is not null &&
-            !string.Equals(confirmedPrivacy, VkLiveStartOptions.Privacy(options.ViewPrivacy), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new VkClientException(
-                $"VK вернул privacy_view={confirmedPrivacy} вместо {VkLiveStartOptions.Privacy(options.ViewPrivacy)} для видео {session.Reference}.");
+            status = WithDraftState(status, await GetDraftStateAsync(
+                    session.OwnerId,
+                    session.VideoId,
+                    cancellationToken)
+                .ConfigureAwait(false));
         }
 
         if (status.State == VkVideoProcessingState.Ready && confirmedPrivacy is null)
@@ -232,6 +247,37 @@ public sealed class VkVideosService
         await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
         return String(video, "access_key") ?? accessKey;
     }
+
+    private async Task<bool?> GetDraftStateAsync(
+        long ownerId,
+        long videoId,
+        CancellationToken cancellationToken)
+    {
+        var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        using var document = await api.CallVideoAsync("video.getVideoForEdit", new Dictionary<string, string>
+        {
+            ["owner_id"] = ownerId.ToString(),
+            ["video_id"] = videoId.ToString(),
+        }, cancellationToken).ConfigureAwait(false);
+        var response = VkWebApi.GetResponseOrThrow(document, "video.getVideoForEdit");
+        if (!response.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object)
+            return null;
+
+        // VK omits is_draft for an already published object. The same shape is
+        // consumed by the official editor, where an absent field means false.
+        return NullableBoolean(item, "is_draft") ?? false;
+    }
+
+    private static VkVideoResult WithDraftState(VkVideoResult status, bool? isDraft) => new()
+    {
+        OwnerId = status.OwnerId,
+        VideoId = status.VideoId,
+        AccessKey = status.AccessKey,
+        State = isDraft == true ? VkVideoProcessingState.Processing : status.State,
+        PlayerUrl = status.PlayerUrl,
+        PrivacyView = status.PrivacyView,
+        IsDraft = isDraft,
+    };
 
     /// <summary>Проверить обработку записи по стабильному provider id.</summary>
     public async Task<VkVideoResult> GetStatusAsync(
