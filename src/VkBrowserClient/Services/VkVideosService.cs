@@ -110,8 +110,9 @@ public sealed class VkVideosService
     }
 
     /// <summary>
-    /// Применить приватность через приложение VK Видео и обязательно подтвердить её
-    /// readback-запросом. Неподтверждённое by_link не считается успешной публикацией.
+    /// Применить приватность через приложение VK Видео. Пока файл обрабатывается, VK
+    /// может принять edit, но не вернуть privacy_view: это промежуточное состояние,
+    /// а не ошибка. Готовая запись без подтверждённой приватности отклоняется.
     /// </summary>
     public async Task<VkVideoResult> CompleteAsync(
         VkVideoUploadSession session,
@@ -130,16 +131,39 @@ public sealed class VkVideosService
                 options.Description,
                 cancellationToken)
             .ConfigureAwait(false);
-        if (!privacy.Accepted || !privacy.Confirms(options.ViewPrivacy))
+        if (!privacy.Accepted)
             throw new VkClientException(
-                $"VK принял видео {session.Reference}, но не подтвердил privacy_view={VkLiveStartOptions.Privacy(options.ViewPrivacy)}.");
+                $"VK отклонил privacy_view={VkLiveStartOptions.Privacy(options.ViewPrivacy)} для видео {session.Reference}.");
 
-        return await GetStatusAsync(
+        var status = await GetStatusAsync(
                 session.OwnerId,
                 session.VideoId,
                 session.AccessKey,
                 cancellationToken)
             .ConfigureAwait(false);
+        var confirmedPrivacy = privacy.Privacy ?? status.PrivacyView;
+        if (confirmedPrivacy is not null &&
+            !string.Equals(confirmedPrivacy, VkLiveStartOptions.Privacy(options.ViewPrivacy), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new VkClientException(
+                $"VK вернул privacy_view={confirmedPrivacy} вместо {VkLiveStartOptions.Privacy(options.ViewPrivacy)} для видео {session.Reference}.");
+        }
+
+        if (status.State == VkVideoProcessingState.Ready && confirmedPrivacy is null)
+        {
+            throw new VkClientException(
+                $"VK принял видео {session.Reference}, но не подтвердил privacy_view={VkLiveStartOptions.Privacy(options.ViewPrivacy)} после обработки.");
+        }
+
+        return new VkVideoResult
+        {
+            OwnerId = status.OwnerId,
+            VideoId = status.VideoId,
+            AccessKey = status.AccessKey,
+            State = status.State,
+            PlayerUrl = status.PlayerUrl,
+            PrivacyView = confirmedPrivacy,
+        };
     }
 
     /// <summary>Проверить обработку записи по стабильному provider id.</summary>
@@ -186,6 +210,7 @@ public sealed class VkVideosService
             AccessKey = String(item, "access_key") ?? accessKey,
             State = processing ? VkVideoProcessingState.Processing : VkVideoProcessingState.Ready,
             PlayerUrl = String(item, "player"),
+            PrivacyView = ReadPrivacyView(item),
         };
     }
 
@@ -242,5 +267,23 @@ public sealed class VkVideosService
             return false;
         return value.ValueKind == JsonValueKind.True ||
                value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var numeric) && numeric != 0;
+    }
+
+    private static string? ReadPrivacyView(JsonElement item)
+    {
+        if (!item.TryGetProperty("privacy_view", out var privacy))
+            return null;
+        return privacy.ValueKind switch
+        {
+            JsonValueKind.String => privacy.GetString(),
+            JsonValueKind.Object => privacy.TryGetProperty("category", out var category)
+                                    && category.ValueKind == JsonValueKind.String
+                ? category.GetString()
+                : null,
+            JsonValueKind.Array => privacy.GetArrayLength() > 0 && privacy[0].ValueKind == JsonValueKind.String
+                ? privacy[0].GetString()
+                : null,
+            _ => null,
+        };
     }
 }

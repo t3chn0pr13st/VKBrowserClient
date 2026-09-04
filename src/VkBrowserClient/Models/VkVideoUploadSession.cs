@@ -59,11 +59,21 @@ public sealed class VkVideoResult
     public required VkVideoProcessingState State { get; init; }
     public string? PlayerUrl { get; init; }
 
+    /// <summary>
+    /// Приватность, подтверждённая readback-запросом. <see langword="null"/> означает,
+    /// что VK не вернул поле; это не считается публичным доступом и не должно
+    /// разблокировать публикацию записи.
+    /// </summary>
+    public string? PrivacyView { get; init; }
+
     public string Reference => $"video{OwnerId}_{VideoId}";
 
     public string Url => string.IsNullOrWhiteSpace(AccessKey)
         ? $"https://vkvideo.ru/{Reference}"
         : $"https://vkvideo.ru/{Reference}?access_key={Uri.EscapeDataString(AccessKey)}";
+
+    public bool ConfirmsPrivacy(VkLivePrivacy expected) =>
+        string.Equals(PrivacyView, VkLiveStartOptions.Privacy(expected), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Безопасное представление без access key и player URL.</summary>
     public override string ToString() => $"{Reference} ({State})";

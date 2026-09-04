@@ -115,6 +115,8 @@ public sealed class PublicationApiTests
         Assert.Equal(VkVideoUploadStage.Uploaded, uploaded.Stage);
         Assert.Equal("video-123_99", result.Reference);
         Assert.Equal(VkVideoProcessingState.Ready, result.State);
+        Assert.Equal("by_link", result.PrivacyView);
+        Assert.True(result.ConfirmsPrivacy(VkLivePrivacy.ByLink));
         Assert.Contains("access_key=watch-secret", result.Url);
         Assert.Equal("video_file", uploadField);
         Assert.Equal(1, opened);
@@ -128,6 +130,73 @@ public sealed class PublicationApiTests
         Assert.Equal("by_link", edit["privacy_view"]);
         Assert.Equal("-123", edit["owner_id"]);
         Assert.Equal("99", edit["video_id"]);
+    }
+
+    [Fact]
+    public async Task Long_video_accepts_unknown_privacy_only_while_processing()
+    {
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            return call.Method switch
+            {
+                "video.edit" => Json("""{"response":{"success":1}}"""),
+                "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":1,"can_edit_privacy":1,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
+            };
+        });
+
+        await using var client = Client(api, new RecordingHandler((_, _) =>
+            throw new InvalidOperationException("Upload was not expected.")));
+        var result = await client.Videos.CompleteAsync(UploadedSession(), LinkOnlyOptions());
+
+        Assert.Equal(VkVideoProcessingState.Processing, result.State);
+        Assert.Null(result.PrivacyView);
+        Assert.False(result.ConfirmsPrivacy(VkLivePrivacy.ByLink));
+    }
+
+    [Fact]
+    public async Task Long_video_fails_closed_when_ready_privacy_is_unknown()
+    {
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            return call.Method switch
+            {
+                "video.edit" => Json("""{"response":{"success":1}}"""),
+                "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":0,"can_edit_privacy":1,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
+            };
+        });
+
+        await using var client = Client(api, new RecordingHandler((_, _) =>
+            throw new InvalidOperationException("Upload was not expected.")));
+        var exception = await Assert.ThrowsAsync<VkClientException>(() =>
+            client.Videos.CompleteAsync(UploadedSession(), LinkOnlyOptions()));
+
+        Assert.Contains("не подтвердил privacy_view=by_link после обработки", exception.Message);
+    }
+
+    [Fact]
+    public async Task Long_video_rejects_explicit_public_privacy_during_processing()
+    {
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            return call.Method switch
+            {
+                "video.edit" => Json("""{"response":{"success":1}}"""),
+                "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":1,"privacy_view":"all"}]}}"""),
+                _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
+            };
+        });
+
+        await using var client = Client(api, new RecordingHandler((_, _) =>
+            throw new InvalidOperationException("Upload was not expected.")));
+        var exception = await Assert.ThrowsAsync<VkClientException>(() =>
+            client.Videos.CompleteAsync(UploadedSession(), LinkOnlyOptions()));
+
+        Assert.Contains("privacy_view=all вместо by_link", exception.Message);
     }
 
     [Fact]
@@ -394,6 +463,23 @@ public sealed class PublicationApiTests
         };
         return new VkClient(new MemorySessionStore(session), options);
     }
+
+    private static VkVideoUploadSession UploadedSession() => new()
+    {
+        OwnerId = -123,
+        VideoId = 99,
+        AccessKey = "watch-secret",
+        UploadUrl = "https://upload.test/vod?signature=secret",
+        Stage = VkVideoUploadStage.Uploaded,
+    };
+
+    private static VkVideoUploadOptions LinkOnlyOptions() => new()
+    {
+        GroupId = 123,
+        Name = "Class",
+        Description = "Paid recording",
+        ViewPrivacy = VkLivePrivacy.ByLink,
+    };
 
     private static VkUploadSource Source(string fileName, string contentType, int length, Action opened)
     {
