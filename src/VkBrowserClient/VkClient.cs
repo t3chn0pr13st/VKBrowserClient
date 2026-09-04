@@ -24,6 +24,7 @@ public sealed class VkClient : IAsyncDisposable
     private VkLiveSdkApi? _liveSdkApi;
     private VkMessagesService? _messages;
     private VkWallService? _wall;
+    private VkVideosService? _videos;
     private VkClipsService? _clips;
     private VkLiveService? _live;
     private VkLiveSdkService? _liveSdk;
@@ -50,6 +51,9 @@ public sealed class VkClient : IAsyncDisposable
 
     /// <summary>Записи на стене.</summary>
     public VkWallService Wall => _wall ??= new VkWallService(this);
+
+    /// <summary>Длинные записи VK Видео без обязательной публикации на стене.</summary>
+    public VkVideosService Videos => _videos ??= new VkVideosService(this);
 
     /// <summary>Публикация клипов.</summary>
     public VkClipsService Clips => _clips ??= new VkClipsService(this);

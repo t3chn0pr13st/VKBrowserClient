@@ -20,6 +20,7 @@
 - 📤 Отправка сообщений с медиа: фото, документы (файлы/GIF/аудиосообщения), видео.
 - 🖼 Публикация записей на личной стене и в сообществах с фото, каруселями, документами и видео.
 - 🎬 Публикация клипов (VK Клипы) — полный флоу `shortVideo.*`, сохраняемые этапы загрузки, изменение описания и проверка обработки.
+- 📼 Длинные VOD — сохраняемые этапы `video.save` → CDN upload → подтверждённый `privacy_view=by_link`, без обязательной записи на стене.
 - 🔴 Прямые трансляции VK Видео — typed lifecycle `video.startStreaming` / `stopStreaming`, категории, метаданные, текущие зрители/просмотры, статус/запись, удаление и обложки.
 - 🔒 Live-SDK слоты сообществ — создание с заданной permission, безопасный patch существующего слота через полный `PUT` и обязательный readback фактических настроек.
 - Обложка live-эфира передаёт полный JSON-ответ upload-сервера в `video.saveUploadedThumb.thumb_json`, не логируя его значения.
@@ -73,6 +74,13 @@ foreach (var c in dialogs.Items) Console.WriteLine($"[{c.PeerType}] {c.Title}");
 await client.Messages.SendMessageAsync(peerId: 100, text: "Привет", photos: new[] { VkImage.FromFile("pic.jpg") });
 await client.Wall.PostAsync("Пост с картинкой", new[] { VkImage.FromFile("cover.jpg") });
 await client.Wall.PostToCommunityAsync(12345, "Пост", [VkAttachmentSource.Photo("cover.jpg")]);
+
+var video = await client.Videos.UploadFromFileAsync("class.mp4", new VkVideoUploadOptions
+{
+    GroupId = 12345,
+    Name = "Запись класса",
+    ViewPrivacy = VkLivePrivacy.ByLink,
+});
 
 var live = await client.Live.StartStreamingAsync(new VkLiveStartOptions
 {
