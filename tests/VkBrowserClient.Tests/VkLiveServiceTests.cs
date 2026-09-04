@@ -531,6 +531,29 @@ public sealed class VkLiveServiceTests
         Assert.False(result.Confirms(VkLivePrivacy.ByLink));
     }
 
+    [Fact]
+    public async Task Video_edit_access_key_confirms_link_only_when_get_hides_privacy()
+    {
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var url = request.RequestUri!.ToString();
+            await ApiCall.FromAsync(request, cancellationToken);
+            if (url.Contains("act=web_token", StringComparison.Ordinal))
+                return Json("""{"type":"okay","data":{"access_token":"video-app-token","expires":1800,"user_id":42}}""");
+            if (url.Contains("video.edit", StringComparison.Ordinal))
+                return Json("""{"response":{"success":1,"access_key":"link-only-key"}}""");
+            return Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":456}]}}""");
+        });
+
+        await using var client = Client(api);
+        var result = await client.Live.SetVideoPrivacyAsync(-123, 456, VkLivePrivacy.ByLink);
+
+        Assert.True(result.Accepted);
+        Assert.Equal("by_link", result.Privacy);
+        Assert.Equal("link-only-key", result.AccessKey);
+        Assert.True(result.Confirms(VkLivePrivacy.ByLink));
+    }
+
     private static VkClient Client(HttpMessageHandler api, HttpMessageHandler? uploads = null)
     {
         var session = new VkSession

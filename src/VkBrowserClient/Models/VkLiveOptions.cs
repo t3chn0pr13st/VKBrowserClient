@@ -117,6 +117,14 @@ public sealed class VkVideoPrivacyResult
     /// </summary>
     public string? Privacy { get; init; }
 
+    /// <summary>
+    /// Ключ, который <c>video.edit</c> возвращает для доступа по ссылке. Наличие
+    /// ключа после запроса <c>privacy_view=by_link</c> является подтверждением
+    /// link-only режима, даже если последующий <c>video.get</c> скрывает поле
+    /// <c>privacy_view</c>.
+    /// </summary>
+    public string? AccessKey { get; init; }
+
     /// <summary>Подтверждено ли ожидаемое значение перечитыванием.</summary>
     public bool Confirms(VkLivePrivacy expected) =>
         Privacy is not null &&

@@ -226,9 +226,11 @@ public sealed class VkLiveService
         AddOptional(parameters, "desc", description);
 
         var api = await _client.RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        string? accessKey;
         using (var doc = await api.CallVideoAsync("video.edit", parameters, cancellationToken).ConfigureAwait(false))
         {
             var response = ResponseOrThrow(doc, "video.edit");
+            accessKey = String(response, "access_key");
             var accepted = response.ValueKind switch
             {
                 JsonValueKind.Object => Boolean(response, "success"),
@@ -244,8 +246,10 @@ public sealed class VkLiveService
         }
 
         var confirmed = await GetVideoPrivacyAsync(ownerId, videoId, cancellationToken).ConfigureAwait(false);
+        if (confirmed is null && view == VkLivePrivacy.ByLink && !string.IsNullOrWhiteSpace(accessKey))
+            confirmed = VkLiveStartOptions.Privacy(view);
         await _client.PersistSessionAsync(cancellationToken).ConfigureAwait(false);
-        return new VkVideoPrivacyResult { Accepted = true, Privacy = confirmed };
+        return new VkVideoPrivacyResult { Accepted = true, Privacy = confirmed, AccessKey = accessKey };
     }
 
     /// <summary>

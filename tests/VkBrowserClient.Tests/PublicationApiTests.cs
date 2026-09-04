@@ -178,6 +178,30 @@ public sealed class PublicationApiTests
     }
 
     [Fact]
+    public async Task Long_video_uses_video_edit_access_key_as_link_only_confirmation()
+    {
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            return call.Method switch
+            {
+                "video.edit" => Json("""{"response":{"success":1,"access_key":"edited-link-key"}}"""),
+                "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"processing":0,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
+            };
+        });
+
+        await using var client = Client(api, new RecordingHandler((_, _) =>
+            throw new InvalidOperationException("Upload was not expected.")));
+        var result = await client.Videos.CompleteAsync(UploadedSession(), LinkOnlyOptions());
+
+        Assert.Equal(VkVideoProcessingState.Ready, result.State);
+        Assert.True(result.ConfirmsPrivacy(VkLivePrivacy.ByLink));
+        Assert.Equal("edited-link-key", result.AccessKey);
+        Assert.Contains("access_key=edited-link-key", result.Url);
+    }
+
+    [Fact]
     public async Task Long_video_rejects_explicit_public_privacy_during_processing()
     {
         var api = new RecordingHandler(async (request, cancellationToken) =>

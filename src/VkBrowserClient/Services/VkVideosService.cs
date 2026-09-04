@@ -138,7 +138,7 @@ public sealed class VkVideosService
         var status = await GetStatusAsync(
                 session.OwnerId,
                 session.VideoId,
-                session.AccessKey,
+                privacy.AccessKey ?? session.AccessKey,
                 cancellationToken)
             .ConfigureAwait(false);
         var confirmedPrivacy = privacy.Privacy ?? status.PrivacyView;
