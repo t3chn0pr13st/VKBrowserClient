@@ -73,6 +73,64 @@ public sealed class PublicationApiTests
     }
 
     [Fact]
+    public async Task Long_video_upload_is_resumable_link_only_and_never_posts_to_wall()
+    {
+        var calls = new List<ApiCall>();
+        var api = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var call = await ApiCall.FromAsync(request, cancellationToken);
+            calls.Add(call);
+            return call.Method switch
+            {
+                "video.save" => Json("""{"response":{"upload_url":"https://upload.test/vod?signature=secret","owner_id":-123,"video_id":99,"access_key":"watch-secret"}}"""),
+                "video.edit" => Json("""{"response":{"success":1}}"""),
+                "video.get" => Json("""{"response":{"count":1,"items":[{"owner_id":-123,"id":99,"privacy_view":"by_link","processing":0,"player":"https://vkvideo.ru/video_ext.php?oid=-123&id=99&hash=embed-secret"}]}}"""),
+                _ => throw new InvalidOperationException($"Unexpected API method {call.Method}")
+            };
+        });
+        string? uploadField = null;
+        var uploads = new RecordingHandler(async (request, cancellationToken) =>
+        {
+            var body = Encoding.Latin1.GetString(await request.Content!.ReadAsByteArrayAsync(cancellationToken));
+            uploadField = body.Contains("video_file", StringComparison.Ordinal) ? "video_file" : null;
+            return Json("""{"video_hash":"accepted"}""");
+        });
+        var opened = 0;
+        var source = Source("class.mp4", "video/mp4", 64_000, () => opened++);
+
+        await using var client = Client(api, uploads);
+        var options = new VkVideoUploadOptions
+        {
+            GroupId = 123,
+            Name = "Class",
+            Description = "Paid recording",
+            ViewPrivacy = VkLivePrivacy.ByLink,
+        };
+        var created = await client.Videos.CreateUploadSessionAsync(source, options);
+        var restored = JsonSerializer.Deserialize<VkVideoUploadSession>(JsonSerializer.Serialize(created))!;
+        var uploaded = await client.Videos.UploadAsync(restored, source);
+        var result = await client.Videos.CompleteAsync(uploaded, options);
+
+        Assert.Equal(VkVideoUploadStage.Created, created.Stage);
+        Assert.Equal(VkVideoUploadStage.Uploaded, uploaded.Stage);
+        Assert.Equal("video-123_99", result.Reference);
+        Assert.Equal(VkVideoProcessingState.Ready, result.State);
+        Assert.Contains("access_key=watch-secret", result.Url);
+        Assert.Equal("video_file", uploadField);
+        Assert.Equal(1, opened);
+        Assert.DoesNotContain("secret", created.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(calls, x => x.Method == "wall.post");
+
+        var save = calls.Single(x => x.Method == "video.save").Form;
+        Assert.Equal("123", save["group_id"]);
+        Assert.Equal("0", save["wallpost"]);
+        var edit = calls.Single(x => x.Method == "video.edit").Form;
+        Assert.Equal("by_link", edit["privacy_view"]);
+        Assert.Equal("-123", edit["owner_id"]);
+        Assert.Equal("99", edit["video_id"]);
+    }
+
+    [Fact]
     public async Task Transient_upload_failure_reopens_stream_before_retry()
     {
         var api = new RecordingHandler(async (request, cancellationToken) =>
@@ -314,6 +372,8 @@ public sealed class PublicationApiTests
             UserId = 42,
             WebToken = "test-token",
             WebTokenExpiresAtUnix = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
+            VideoToken = "test-video-token",
+            VideoTokenExpiresAtUnix = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),
             Cookies =
             [
                 new VkCookie
