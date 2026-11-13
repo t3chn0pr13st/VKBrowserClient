@@ -109,6 +109,21 @@ public sealed class VkClientOptions
     /// </summary>
     public Action<string>? StatusCallback { get; set; }
 
+    /// <summary>Silent cookie recovery independent of interactive login (for server hosts).</summary>
+    public Func<VkClientOptions, ISessionCookieTopUp>? SessionCookieTopUpFactory { get; set; }
+
+    /// <summary>Maximum duration of one silent recovery, including browser navigation.</summary>
+    public TimeSpan CookieTopUpTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>Never open a visible browser during cookie recovery.</summary>
+    public bool CookieTopUpHeadlessOnly { get; set; }
+
+    /// <summary>Optional installed Chromium/Chrome executable; does not use a personal profile.</summary>
+    public string? BrowserExecutablePath { get; set; }
+
+    /// <summary>Allow automatic Playwright browser installation. Disable on managed servers.</summary>
+    public bool InstallBrowserIfMissing { get; set; } = true;
+
     // Test seams remain internal so the public client does not expose transport internals.
     internal Func<HttpMessageHandler>? ApiHttpMessageHandlerFactory { get; set; }
     internal Func<HttpMessageHandler>? UploadHttpMessageHandlerFactory { get; set; }

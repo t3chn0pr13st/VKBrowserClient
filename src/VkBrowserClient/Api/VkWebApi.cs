@@ -23,18 +23,28 @@ public sealed class VkWebApi : IDisposable
 
     private readonly VkSession _session;
     private readonly VkClientOptions _options;
+    private readonly CookieContainer _cookieContainer;
+    private readonly ISessionCookieTopUp? _cookieTopUp;
+    private readonly Func<CancellationToken, Task>? _persistSession;
     private readonly HttpClient _http;
     private readonly HttpClient _uploadHttp;
     private readonly SemaphoreSlim _tokenGate = new(1, 1);
 
     public VkWebApi(VkSession session, VkClientOptions options)
+        : this(session, options, null, null) { }
+
+    internal VkWebApi(VkSession session, VkClientOptions options, ISessionCookieTopUp? cookieTopUp,
+        Func<CancellationToken, Task>? persistSession)
     {
+        _cookieTopUp = cookieTopUp;
+        _persistSession = persistSession;
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _options = options ?? throw new ArgumentNullException(nameof(options));
 
         // Ёмкости подняты намеренно: у VK много remix*-cookie, и мы дублируем их по трём хостам.
         // Дефолтные лимиты (20 на домен, 300 всего) могли бы молча вытеснить remixsid.
         var container = new CookieContainer(capacity: 10_000, perDomainCapacity: 1_000, maxCookieSize: 8192);
+        _cookieContainer = container;
         PopulateCookies(container, session.Cookies ?? []);
 
         var handler = options.ApiHttpMessageHandlerFactory?.Invoke() ?? new HttpClientHandler
@@ -362,17 +372,80 @@ public sealed class VkWebApi : IDisposable
         await _tokenGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await MintAsync(
-                appId,
-                _options.LiveSdkWebTokenUrl,
-                _options.LiveSdkWebBaseUrl,
-                _session.WebToken,
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await MintVideoWebTokenAsync(appId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (VkSessionExpiredException) when (_cookieTopUp is not null)
+            {
+                // Only token acquisition is retried. No provider command has been sent yet.
+                await RecoverVideoSessionAsync(cancellationToken).ConfigureAwait(false);
+                return await MintVideoWebTokenAsync(appId, cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
             _tokenGate.Release();
         }
+    }
+
+    private Task<MintedWebToken> MintVideoWebTokenAsync(string appId, CancellationToken cancellationToken) =>
+        MintAsync(appId, _options.LiveSdkWebTokenUrl, _options.LiveSdkWebBaseUrl,
+            _session.WebToken, cancellationToken);
+
+    /// <summary>Read-only VK Video identity probe, independent of the main VK web token.</summary>
+    public async Task EnsureVideoAuthenticatedAsync(CancellationToken cancellationToken = default)
+    {
+        using var self = await CallVideoAsync("users.get", cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (!self.RootElement.TryGetProperty("response", out var users)
+            || users.ValueKind != JsonValueKind.Array || users.GetArrayLength() != 1
+            || !users[0].TryGetProperty("id", out var id) || !id.TryGetInt64(out var actual)
+            || _session.UserId <= 0 || actual != _session.UserId)
+            throw new VkAuthenticationException("VK Video session identity mismatch.");
+    }
+
+    private async Task RecoverVideoSessionAsync(CancellationToken cancellationToken)
+    {
+        // The candidate is isolated: failed SSO or a different profile must not poison the saved session.
+        var candidate = VkSessionSerializer.FromBase64(VkSessionSerializer.ToBase64(_session));
+        var expectedUserId = _session.UserId;
+        if (expectedUserId <= 0)
+            throw new VkAuthenticationException("VK Video recovery requires a bound user id.");
+        var host = new Uri(_options.LiveSdkWebBaseUrl).Host;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_options.CookieTopUpTimeout);
+        try
+        {
+            if (!await _cookieTopUp!.TopUpAsync(candidate, host, timeout.Token).ConfigureAwait(false)
+                || !candidate.Cookies.Any(c => VkCookieAuthentication.IsUsable(c, host, _options.TokenExpirySkew)))
+                throw new VkSessionExpiredException("VK Video silent session recovery did not restore authorization.");
+            if (candidate.UserId != expectedUserId)
+                throw new VkAuthenticationException("VK Video recovery identity mismatch.");
+            candidate.VideoToken = null;
+            candidate.VideoTokenExpiresAtUnix = 0;
+            using var probe = new VkWebApi(candidate, _options); // no recovery recursion
+            await probe.EnsureVideoAuthenticatedAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (VkAuthenticationException) { throw; }
+        catch (Exception)
+        {
+            // Browser errors can contain redirect URLs. Never include their raw text or cookies.
+            throw new VkSessionExpiredException("Основная VK-сессия работает, но авторизацию VK Видео не удалось восстановить автоматически.");
+        }
+
+        _session.Cookies.RemoveAll(c => VkCookieAuthentication.BelongsTo(c.Domain, host));
+        _session.Cookies.AddRange(candidate.Cookies.Where(c => VkCookieAuthentication.BelongsTo(c.Domain, host)));
+        _session.VideoToken = candidate.VideoToken;
+        _session.VideoTokenExpiresAtUnix = candidate.VideoTokenExpiresAtUnix;
+        _session.LiveSdkToken = null;
+        _session.LiveSdkTokenExpiresAtUnix = 0;
+        _session.LiveSdkRefreshToken = null;
+        foreach (System.Net.Cookie cookie in _cookieContainer.GetAllCookies()) cookie.Expired = true;
+        PopulateCookies(_cookieContainer, _session.Cookies);
+        if (_persistSession is not null)
+            await _persistSession(cancellationToken).ConfigureAwait(false);
+        _options.StatusCallback?.Invoke("Авторизация VK Видео восстановлена через основную VK-сессию; аккаунт проверен.");
     }
 
     private async Task<MintedWebToken> MintAsync(
@@ -444,6 +517,9 @@ public sealed class VkWebApi : IDisposable
             }
 
             var data = payload!.Value;
+            if (_session.UserId > 0 && data.TryGetProperty("user_id", out var profileId)
+                && profileId.TryGetInt64(out var actualUserId) && actualUserId != _session.UserId)
+                throw new VkAuthenticationException("VK web token identity mismatch.");
             return new MintedWebToken(
                 accessToken,
                 data.TryGetProperty("expires", out var exp) && exp.TryGetInt64(out var e) ? e : 0,

@@ -138,3 +138,27 @@ docs/                           — документация
 ## Лицензия
 
 [MIT](LICENSE).
+
+### Автовосстановление VK Видео (0.10.7)
+
+Основная VK-сессия и `vkvideo.ru` имеют независимые сроки авторизации.
+`VkClient` при отказе выпуска Video/live-SDK токена пытается один раз восстановить
+cookie через SSO в изолированном браузере. Восстановление происходит **до** отправки
+команды; сетевой сбой уже отправленной команды не вызывает её повтор.
+Кандидат проверяется чтением `users.get` под приложением VK Видео; только тот же
+user id разрешает сохранение новых cookie. Неуспешное восстановление не заменяет
+сохранённую сессию. `EnsureVideoAuthenticatedAsync()` позволяет проверить именно
+этот путь без публикации или управления эфиром.
+
+Сервер может оставить интерактивный вход запрещённым и независимо разрешить SSO:
+
+```csharp
+options.AuthenticatorFactory = _ => new NeverInteractiveAuthenticator(); // host implementation
+options.SessionCookieTopUpFactory = o => new PlaywrightAuthenticator(o);
+options.CookieTopUpHeadlessOnly = true;
+options.InstallBrowserIfMissing = false;
+options.BrowserExecutablePath = "/usr/bin/chromium"; // preinstalled by operator
+```
+
+Если основная cookie-сессия тоже недействительна, требуется новый вход. Права
+на конкретное сообщество проверяются отдельно и не подтверждаются этим зондом.

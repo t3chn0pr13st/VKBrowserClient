@@ -103,14 +103,14 @@ public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator, ISessio
 
         // Пользовательских действий здесь не требуется, поэтому сначала пробуем без окна.
         // Если VK не отдаёт cookie фоновому браузеру, повторяем с видимым — вход всё равно не нужен.
-        foreach (var headless in new[] { true, false })
+        foreach (var headless in _options.CookieTopUpHeadlessOnly ? new[] { true } : new[] { true, false })
         {
             if (await TryTopUpAsync(session, host, headless, cancellationToken).ConfigureAwait(false))
                 return true;
 
-            Status(headless
+            Status(headless && !_options.CookieTopUpHeadlessOnly
                 ? $"{host} не отдал cookie фоновому браузеру — повторяю с видимым окном…"
-                : $"{host} не отдал cookie и в видимом окне.");
+                : $"{host}: автоматическое восстановление cookie не удалось.");
         }
 
         return false;
@@ -132,7 +132,12 @@ public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator, ISessio
                 ViewportSize = new ViewportSize { Width = 1180, Height = 820 },
             }).ConfigureAwait(false);
 
-            var seeded = session.Cookies.Select(ToPlaywrightCookie).Where(x => x is not null).Cast<Cookie>().ToArray();
+            var seeded = session.Cookies
+                .Where(c => c.Expires is null or < 0 || c.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+                // Remove stale video credentials so the page actually performs SSO.
+                .Where(c => !BelongsTo(c.Domain, host) || !(c.Name.Equals("remixsid", StringComparison.OrdinalIgnoreCase)
+                    || c.Name.Equals("remixdsid", StringComparison.OrdinalIgnoreCase)))
+                .Select(ToPlaywrightCookie).Where(x => x is not null).Cast<Cookie>().ToArray();
             if (seeded.Length == 0)
                 throw new VkAuthenticationException("Не удалось перенести cookies сессии в браузер.");
             await context.AddCookiesAsync(seeded).ConfigureAwait(false);
@@ -140,13 +145,27 @@ public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator, ISessio
             var page = await context.NewPageAsync().ConfigureAwait(false);
             Status($"Открываю https://{host}/ в браузере, чтобы забрать cookie домена…");
             // NetworkIdle у VK не наступает: страница держит соединения постоянно.
+            await page.GotoAsync(_options.WebBaseUrl, new PageGotoOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = 30_000,
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
             await page.GotoAsync($"https://{host}/", new PageGotoOptions
             {
                 WaitUntil = WaitUntilState.DOMContentLoaded,
-                Timeout = 60_000,
-            }).ConfigureAwait(false);
-            // Переход между доменами делает скрипт страницы, поэтому даём ему отработать.
-            await Task.Delay(4000, cancellationToken).ConfigureAwait(false);
+                Timeout = 30_000,
+            }).WaitAsync(cancellationToken).ConfigureAwait(false);
+            // SSO runs in page scripts; poll authorization rather than accepting service cookies.
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if ((await context.CookiesAsync().ConfigureAwait(false)).Any(c =>
+                    BelongsTo(c.Domain, host) && (c.Name == "remixdsid" || c.Name == "remixsid")
+                    && !string.IsNullOrEmpty(c.Value)
+                    && (c.Expires < 0 || c.Expires > DateTimeOffset.UtcNow.Add(_options.TokenExpirySkew).ToUnixTimeSeconds())))
+                    break;
+                await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+            }
 
             var fresh = (await context.CookiesAsync().ConfigureAwait(false))
                 .Where(c => BelongsTo(c.Domain, host))
@@ -154,8 +173,10 @@ public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator, ISessio
 
             // Наличие любых cookie домена ещё ничего не значит: VK ставит служебные и без входа.
             // Признак состоявшегося перехода — авторизационная cookie.
-            if (!fresh.Any(c => c.Name.StartsWith("remixdsid", StringComparison.OrdinalIgnoreCase)
-                                || c.Name.Equals("remixsid", StringComparison.OrdinalIgnoreCase)))
+            if (!fresh.Any(c => (c.Name.Equals("remixdsid", StringComparison.OrdinalIgnoreCase)
+                                || c.Name.Equals("remixsid", StringComparison.OrdinalIgnoreCase))
+                                && !string.IsNullOrWhiteSpace(c.Value)
+                                && (c.Expires < 0 || c.Expires > DateTimeOffset.UtcNow.Add(_options.TokenExpirySkew).ToUnixTimeSeconds())))
             {
                 return false;
             }
@@ -217,12 +238,17 @@ public sealed class PlaywrightAuthenticator : IInteractiveAuthenticator, ISessio
     private async Task<IBrowser> LaunchAsync(IPlaywright playwright, bool headless = false)
     {
         // Для входа окно должно быть видимым (капча/2FA); для дозабора cookie — не обязано.
-        var launchOptions = new BrowserTypeLaunchOptions { Headless = headless };
+        var launchOptions = new BrowserTypeLaunchOptions
+        {
+            Headless = headless,
+            ExecutablePath = _options.BrowserExecutablePath,
+            Timeout = 30_000,
+        };
         try
         {
             return await playwright.Chromium.LaunchAsync(launchOptions).ConfigureAwait(false);
         }
-        catch (PlaywrightException ex) when (LooksLikeMissingBrowser(ex))
+        catch (PlaywrightException ex) when (_options.InstallBrowserIfMissing && LooksLikeMissingBrowser(ex))
         {
             Status("Браузер Chromium для Playwright не установлен — скачиваю (однократно)…");
             var exitCode = Microsoft.Playwright.Program.Main(["install", "chromium"]);

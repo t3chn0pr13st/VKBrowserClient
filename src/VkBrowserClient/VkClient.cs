@@ -162,23 +162,14 @@ public sealed class VkClient : IAsyncDisposable
     {
         if (_api is null)
             await EnsureAuthenticatedAsync(cancellationToken).ConfigureAwait(false);
-        await EnsureLiveSdkCookiesAsync(cancellationToken).ConfigureAwait(false);
+        // Token minting recovers video-domain cookies lazily, before any SDK command.
         return _liveSdkApi ??= new VkLiveSdkApi(_session!, _options, _api!);
     }
 
     /// <summary>
-    /// Live-SDK мятит токен на своём домене, у которого собственные cookie. Сессии, снятые до того,
-    /// как аутентификатор стал туда заходить, их не содержат — но полноценный вход ради этого не
-    /// нужен: браузеру достаточно один раз открыть домен, VK передаст сессию сам.
-    ///
-    /// Проверка стоит здесь, а не в <see cref="EnsureAuthenticatedAsync"/>, чтобы её цену платили
-    /// только те, кому live-SDK действительно нужен: остальным возможностям клиента эти cookie
-    /// безразличны.
-    /// </summary>
-    /// <summary>
-    /// Готовит сессию к работе с live-SDK: при необходимости добирает cookie его домена, не требуя
-    /// повторного входа. Возвращает <c>false</c>, если добрать не удалось — тогда live-SDK
-    /// откажет с явной ошибкой при первом же обращении.
+    /// Checks the video-domain session with a read-only identity probe, recovering it through
+    /// main VK SSO when available. Returns false when authorization cannot be restored.
+    /// Identity mismatches and caller cancellation are never swallowed.
     /// </summary>
     public async Task<bool> EnsureLiveSdkSessionAsync(CancellationToken cancellationToken = default)
     {
@@ -189,31 +180,25 @@ public sealed class VkClient : IAsyncDisposable
 
     private async Task<bool> EnsureLiveSdkCookiesAsync(CancellationToken cancellationToken)
     {
-        var host = new Uri(_options.LiveSdkWebBaseUrl).Host;
-        if (_session is null)
-            return false;
-        if (HasCookiesFor(_session, host))
+        try
+        {
+            await _api!.EnsureVideoAuthenticatedAsync(cancellationToken).ConfigureAwait(false);
+            await PersistSessionAsync(cancellationToken).ConfigureAwait(false);
             return true;
-
-        if (_authenticator is not ISessionCookieTopUp topUp)
-            return false;
-
-        _options.StatusCallback?.Invoke($"В сессии нет cookie {host} — пробую добрать их без повторного входа…");
-        if (!await topUp.TopUpAsync(_session, host, cancellationToken).ConfigureAwait(false))
-            return false;
-
-        await _store.SaveAsync(_session, cancellationToken).ConfigureAwait(false);
-        RebuildApi();
-        return true;
+        }
+        catch (VkSessionExpiredException) { return false; }
     }
 
-    private static bool HasCookiesFor(VkSession session, string host) =>
-        session.Cookies.Any(c =>
-        {
-            var domain = (c.Domain ?? "").TrimStart('.');
-            return domain.Equals(host, StringComparison.OrdinalIgnoreCase)
-                   || domain.EndsWith('.' + host, StringComparison.OrdinalIgnoreCase);
-        });
+    /// <summary>
+    /// Read-only validation of VK Video authorization and exact user identity.
+    /// Recovers its domain cookies from the main session when possible; never starts/stops a stream.
+    /// </summary>
+    public async Task EnsureVideoAuthenticatedAsync(CancellationToken cancellationToken = default)
+    {
+        var api = await RequireApiAsync(cancellationToken).ConfigureAwait(false);
+        await api.EnsureVideoAuthenticatedAsync(cancellationToken).ConfigureAwait(false);
+        await PersistSessionAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>Сохранить текущую сессию (web-токен мог обновиться внутри вызова API).</summary>
     internal Task PersistSessionAsync(CancellationToken cancellationToken)
@@ -237,7 +222,9 @@ public sealed class VkClient : IAsyncDisposable
     private void RebuildApi()
     {
         DisposeApis();
-        _api = new VkWebApi(_session!, _options);
+        _api = new VkWebApi(_session!, _options,
+            _options.SessionCookieTopUpFactory?.Invoke(_options) ?? _authenticator as ISessionCookieTopUp,
+            PersistSessionAsync);
     }
 
     private void DisposeApis()
